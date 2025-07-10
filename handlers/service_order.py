@@ -4,7 +4,7 @@ from telegram.ext import ContextTypes, ConversationHandler
 
 # Importações dos nossos próprios módulos
 from handlers.common import cancel, MAIN_MENU_MARKUP
-from database.utils import get_user_data, save_new_os, get_open_os_by_user, close_os_in_db
+from database.utils import get_user_data, save_new_os, get_open_os_by_user, close_os_in_db, is_user_registered
 
 # Configura o logger para este módulo
 logger = logging.getLogger(__name__)
@@ -217,3 +217,45 @@ async def finalize_without_notes(update: Update, context: ContextTypes.DEFAULT_T
     await query.edit_message_text(text="Ok, finalizando o fechamento...")
     context.user_data['final_notes'] = '' # Garante que as notas fiquem vazias
     return await _save_and_end_closing_conversation(update, context)
+
+async def list_open_os(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    Verifica o cadastro do usuário, busca no banco e lista todas as
+    suas Ordens de Serviço com status 'Aberta'.
+    """
+    user_id = update.effective_user.id
+
+    # Passo 1: Verificar se o usuário está cadastrado antes de prosseguir.
+    # (É uma boa prática garantir isso, mesmo que o acesso seja por um botão)
+    if not await is_user_registered(user_id):
+        await update.message.reply_text(
+            "Você precisa estar cadastrado para ver suas Ordens de Serviço. "
+            "Por favor, inicie o cadastro clicando em '🆕 Abrir OS'."
+        )
+        return
+
+    # Passo 2: Buscar as OS abertas no banco de dados.
+    open_os_list = await get_open_os_by_user(user_id)
+
+    # Se a lista estiver vazia, avisa o usuário.
+    if not open_os_list:
+        await update.message.reply_text(
+            "Você não possui nenhuma Ordem de Serviço aberta.",
+            reply_markup=MAIN_MENU_MARKUP
+        )
+        return
+
+    # Passo 3: Formatar a mensagem com a lista de OS.
+    message = "<b>Suas Ordens de Serviço Abertas:</b>\n\n"
+    for os in open_os_list:
+        message += (
+            f"<b>OS #{os['id']}</b>\n"
+            f"  <b>Equipamento:</b> {os['equipamento_nome']} ({os['equipamento_tag']})\n"
+            f"  <b>Tipo:</b> {os['tipo_manutencao']}\n"
+            f"  <b>Prioridade:</b> {os['prioridade']}\n"
+            f"--------------------\n"
+        )
+
+    # Envia a mensagem formatada para o usuário.
+    # Usamos reply_html para que a formatação em negrito (<b>) funcione.
+    await update.message.reply_html(message)
