@@ -1,44 +1,46 @@
-from telegram import Update, ReplyKeyboardMarkup, ReplyKeyboardRemove
+from telegram import Update, ReplyKeyboardMarkup
 from telegram.ext import ContextTypes, ConversationHandler
 
-# --- Teclado do Menu Principal ---
-# Define os botões que aparecerão para o usuário.
+# Teclado do menu principal (sem alterações)
 REPLY_KEYBOARD = [
     ["🆕 Abrir OS", "✅ Fechar OS"],
     ["📋 Listar Abertas", "📊 Relatórios"],
 ]
+MAIN_MENU_MARKUP = ReplyKeyboardMarkup(REPLY_KEYBOARD, resize_keyboard=True)
 
-# Cria o objeto de markup do teclado para ser reutilizado
-MAIN_MENU_MARKUP = ReplyKeyboardMarkup(
-    REPLY_KEYBOARD, 
-    resize_keyboard=True, 
-    one_time_keyboard=False # O teclado não some após um clique
-)
-
-# --- Handlers Comuns ---
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """
-    Handler para o comando /start. Envia uma mensagem de boas-vindas
-    e exibe o menu principal.
-    """
+    """Envia a mensagem de boas-vindas e o menu principal."""
     user = update.effective_user
     await update.message.reply_html(
         f"Olá, {user.mention_html()}! Bem-vindo ao Bot de OS da Kraflo.",
         reply_markup=MAIN_MENU_MARKUP,
     )
 
+
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """
-    Cancela a conversa atual, limpa os dados temporários do usuário
-    e retorna ao menu principal.
+    Cancela a operação atual de forma universal, lidando com
+    mensagens de texto e callbacks de botões.
     """
-    await update.message.reply_text(
-        "Operação cancelada.", reply_markup=MAIN_MENU_MARKUP
-    )
+    query = update.callback_query
     
-    # Limpa qualquer dado que estivesse sendo coletado na conversa
-    context.user_data.clear()
-    
+    # Se a função foi chamada por um botão (CallbackQuery)
+    if query:
+        # Responde ao callback para o ícone de "carregando" sumir no app do usuário
+        await query.answer()
+        # Edita a mensagem original do botão para confirmar o cancelamento
+        await query.edit_message_text(text="Operação cancelada.")
+        
+    # Se a função foi chamada por um comando ou mensagem de texto
+    else:
+        await update.message.reply_text(
+            "Operação cancelada.", reply_markup=MAIN_MENU_MARKUP
+        )
+
+    # Limpa os dados temporários da conversa, se houver
+    if context.user_data:
+        context.user_data.clear()
+        
     # Finaliza o ConversationHandler
     return ConversationHandler.END

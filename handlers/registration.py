@@ -6,25 +6,26 @@ from telegram.ext import ContextTypes, ConversationHandler
 from config import supabase
 from handlers.common import MAIN_MENU_MARKUP
 from database.utils import is_user_registered
+# Importa a função que INICIA a conversa de abertura de OS
+from handlers.service_order import start_open_os 
 
-# --- Definição dos Estados da Conversa ---
-# Usamos números para definir cada passo da conversa de cadastro.
+# --- Definição dos Estados da Conversa de Cadastro ---
 (
     NOME_EMPRESA, 
     NOME_COMPLETO, 
     FUNCAO, 
     SETOR
-) = range(4)
+) = range(4) # Estados de 0 a 3
 
 # Configura o logger para este módulo
 logger = logging.getLogger(__name__)
 
 
-async def start_registration_or_os(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def start_registration_or_os(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """
-    Ponto de entrada principal. Verifica se o usuário é cadastrado.
-    Se não for, inicia o fluxo de cadastro.
-    Se já for, futuramente iniciará o fluxo de abertura de OS.
+    Ponto de entrada único. Verifica se o usuário é cadastrado.
+    - Se NÃO for, inicia o fluxo de CADASTRO.
+    - Se JÁ FOR, passa o controle para o fluxo de ABERTURA DE OS.
     """
     user_id = update.effective_user.id
     
@@ -33,16 +34,14 @@ async def start_registration_or_os(update: Update, context: ContextTypes.DEFAULT
         await update.message.reply_text(
             "Bem-vindo! Vejo que é seu primeiro acesso.\n"
             "Vamos criar seu cadastro. Primeiro, qual o nome da sua EMPRESA?",
-            reply_markup=ReplyKeyboardRemove(),  # Remove o teclado principal temporariamente
+            reply_markup=ReplyKeyboardRemove(),
         )
+        # Retorna o primeiro estado da conversa de CADASTRO
         return NOME_EMPRESA
     else:
-        # Usuário já cadastrado, a lógica de abrir OS virá aqui
-        await update.message.reply_text(
-            "Funcionalidade 'Abrir OS' em desenvolvimento.", 
-            reply_markup=MAIN_MENU_MARKUP
-        )
-        return ConversationHandler.END
+        # Usuário já cadastrado, chama a função que inicia a abertura de OS
+        # e retorna o primeiro estado da conversa de OS.
+        return await start_open_os(update, context)
 
 
 async def get_company_name(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -77,15 +76,11 @@ async def get_sector_and_save(update: Update, context: ContextTypes.DEFAULT_TYPE
     try:
         # Passo 1: Verificar se a empresa já existe ou criá-la.
         empresa_nome = context.user_data['nome_empresa']
-        
-        # Busca pela empresa no banco
         response = supabase.table('empresas').select('id').eq('nome_empresa', empresa_nome).execute()
         
         if response.data:
-            # Empresa já existe, pega o ID
             empresa_id = response.data[0]['id']
         else:
-            # Empresa não existe, insere e pega o ID retornado
             response = supabase.table('empresas').insert({"nome_empresa": empresa_nome}).execute()
             empresa_id = response.data[0]['id']
             logger.info(f"Nova empresa '{empresa_nome}' cadastrada com ID: {empresa_id}")
@@ -111,12 +106,10 @@ async def get_sector_and_save(update: Update, context: ContextTypes.DEFAULT_TYPE
     except Exception as e:
         logger.error(f"Erro ao salvar cadastro: {e}")
         await update.message.reply_text(
-            "❌ Ocorreu um erro ao salvar seu cadastro. Por favor, tente novamente mais tarde.",
+            "❌ Ocorreu um erro ao salvar seu cadastro. Por favor, tente novamente.",
             reply_markup=MAIN_MENU_MARKUP,
         )
     finally:
-        # Limpa os dados temporários da conversa
         context.user_data.clear()
 
-    # Encerra a conversa
     return ConversationHandler.END
