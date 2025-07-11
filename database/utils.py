@@ -95,15 +95,18 @@ async def close_os_in_db(os_id: int, close_data: dict, parts_data: list) -> bool
         return False
 
 async def get_all_os_for_report(user_id: int, start_date: str = None, end_date: str = None) -> list[dict] | None:
-    """Busca todas as OS de uma empresa, com base no usuário, com filtro de data opcional."""
+    """
+    Busca todas as OS de uma empresa, com base no usuário, com filtro de data opcional.
+    """
     try:
         user_data = await get_user_data(user_id)
         if not user_data:
             return None
         empresa_id = user_data['empresa_id']
+        
         query = (
             supabase.table("ordens_de_servico")
-            .select("*, tecnicos(nome_completo)")
+            .select("*, tecnicos(nome_completo, codigo_empresa)") 
             .eq("empresa_id", empresa_id)
         )
         if start_date:
@@ -119,9 +122,10 @@ async def get_all_os_for_report(user_id: int, start_date: str = None, end_date: 
 async def get_single_os_details(os_id: int) -> dict | None:
     """Busca todos os detalhes de uma única OS."""
     try:
+        # ALTERAÇÃO AQUI: adicionamos 'codigo_empresa' na seleção do técnico
         response = (
             supabase.table("ordens_de_servico")
-            .select("*, tecnico:tecnicos(nome_completo, funcao), pecas:pecas_utilizadas(*)")
+            .select("*, tecnico:tecnicos(nome_completo, funcao, codigo_empresa), pecas:pecas_utilizadas(*)")
             .eq("id", os_id)
             .single()
             .execute()

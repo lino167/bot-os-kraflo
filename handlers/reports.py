@@ -9,6 +9,7 @@ from telegram.ext import ContextTypes, ConversationHandler
 from database.utils import get_all_os_for_report, get_single_os_details
 from handlers.common import cancel
 from handlers.calendar_helper import create_calendar
+from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
@@ -155,71 +156,123 @@ async def manage_selection(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         context.user_data.pop('selected_os', None)
         return await start_report_generation(update, context)
     return MANAGE_SELECTION
+
 async def generate_pdf_report(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Gera um único PDF com várias páginas, uma para cada OS selecionada."""
     query = update.callback_query
     user_id = update.effective_user.id
     selected_ids = context.user_data.get('selected_os', [])
     await query.edit_message_text(f"Gerando o PDF com {len(selected_ids)} OS selecionada(s)...")
+
     file_path = ""
     try:
         pdf = PDF(orientation='P', unit='mm', format='A4')
+        
         for os_id in selected_ids:
             os_details = await get_single_os_details(os_id)
-            if os_details: _create_detailed_pdf_page(pdf, os_details)
-        file_path = f"relatorio_detalhado_{user_id}.pdf"
+            if os_details:
+                _create_detailed_pdf_page(pdf, os_details)
+
+        file_path = f"relatorio_detalhado_{user_id}_{datetime.now().strftime('%Y%m%d')}.pdf"
         pdf.output(file_path)
+
         with open(file_path, "rb") as document:
             await context.bot.send_document(chat_id=user_id, document=document)
+            
     except Exception as e:
-        logger.error(f"Erro ao gerar PDF: {e}")
+        logger.error(f"Erro ao gerar PDF múltiplo para o usuário {user_id}: {e}")
         await context.bot.send_message(chat_id=user_id, text="Ocorreu um erro ao gerar o PDF.")
     finally:
-        if file_path and os.path.exists(file_path): os.remove(file_path)
+        if file_path and os.path.exists(file_path):
+            os.remove(file_path)
         context.user_data.clear()
     return ConversationHandler.END
+
 async def generate_csv_report(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Gera um relatório CSV contendo apenas as OS selecionadas."""
     query = update.callback_query
     user_id = update.effective_user.id
     selected_ids = context.user_data.get('selected_os', [])
     await query.edit_message_text(f"Gerando o CSV com {len(selected_ids)} OS selecionada(s)...")
+
     file_path = ""
     try:
         all_os_list = context.user_data.get('all_os_list', [])
-        report_data = [os for os in all_os_list if os['id'] in selected_ids]
-        df = pd.DataFrame(report_data)
-        df.rename(columns={'id': 'OS', 'equipamento_nome': 'Equipamento', 'equipamento_tag': 'TAG', 'tipo_manutencao': 'Tipo', 'prioridade': 'Prioridade', 'status_os': 'Status', 'data_abertura': 'Abertura', 'data_fechamento': 'Fechamento', 'descricao_problema': 'Problema', 'diagnostico_solucao': 'Solução', 'notas_finais': 'Notas', 'tecnicos': 'Técnico'}, inplace=True)
-        df['Técnico'] = df['Técnico'].apply(lambda x: x['nome_completo'] if isinstance(x, dict) else 'N/A')
-        file_path = f"relatorio_selecao_{user_id}.csv"
-        df.to_csv(file_path, index=False, sep=';', encoding='utf-8-sig')
+        report_data = [item for item in all_os_list if item['id'] in selected_ids]
+
+        processed_data = []
+        for service_order in report_data:
+            os_copy = service_order.copy()
+            tecnico_info = os_copy.pop('tecnicos', {}) or {} # Garante um dict vazio se for None
+            os_copy['tecnico_nome'] = tecnico_info.get('nome_completo', 'N/A')
+            os_copy['tecnico_codigo'] = tecnico_info.get('codigo_empresa', '') # Pega o código
+            processed_data.append(os_copy)
+
+        df = pd.DataFrame(processed_data)
+        
+        df.rename(columns={
+            'id': 'OS', 'equipamento_nome': 'Equipamento', 'equipamento_tag': 'TAG', 
+            'tipo_manutencao': 'Tipo', 'prioridade': 'Prioridade', 'status_os': 'Status', 
+            'data_abertura': 'Abertura', 'data_fechamento': 'Fechamento', 
+            'descricao_problema': 'Problema', 'diagnostico_solucao': 'Solução', 
+            'notas_finais': 'Notas', 'tecnico_nome': 'Técnico', 'tecnico_codigo': 'Código Técnico',
+            'url_foto': 'Link Foto'
+        }, inplace=True)
+        
+        colunas_finais = [
+            'OS', 'Status', 'Prioridade', 'Tipo', 'Equipamento', 'TAG', 'Técnico', 'Código Técnico',
+            'Abertura', 'Fechamento', 'Problema', 'Solução', 'Notas', 'Link Foto'
+        ]
+        # Filtra apenas as colunas que existem no DataFrame para evitar erros
+        colunas_existentes = [col for col in colunas_finais if col in df.columns]
+        df_final = df[colunas_existentes]
+
+        file_path = f"relatorio_selecao_{user_id}_{datetime.now().strftime('%Y%m%d')}.csv"
+        df_final.to_csv(file_path, index=False, sep=';', encoding='utf-8-sig')
+
         with open(file_path, "rb") as document:
             await context.bot.send_document(chat_id=user_id, document=document)
     except Exception as e:
-        logger.error(f"Erro ao gerar CSV: {e}")
+        logger.error(f"Erro ao gerar relatório CSV para o usuário {user_id}: {e}")
         await context.bot.send_message(chat_id=user_id, text="Ocorreu um erro ao gerar seu relatório CSV.")
     finally:
-        if file_path and os.path.exists(file_path): os.remove(file_path)
+        if file_path and os.path.exists(file_path):
+            os.remove(file_path)
         context.user_data.clear()
+        
     return ConversationHandler.END
+
 def _create_detailed_pdf_page(pdf: PDF, data: dict):
+    """
+    Adiciona uma página ao PDF com os detalhes de uma OS, incluindo o código do técnico.
+    """
     pdf.add_page()
     pdf.set_font('Arial', '', 11)
+
     def sanitize_text(text):
         if not text: return ""
         return str(text).encode('latin-1', 'replace').decode('latin-1')
+
     def format_date(date_str):
         if not date_str: return "Não preenchido"
         try: return pd.to_datetime(date_str).strftime('%d/%m/%Y às %H:%M')
         except (ValueError, TypeError): return str(date_str)
+
+    # --- Seção 1: Detalhes do Profissional (ATUALIZADA) ---
     pdf.set_font('Arial', 'B', 12)
     pdf.cell(0, 8, sanitize_text('1. Detalhes do Profissional'), ln=True, border='B')
     pdf.ln(4)
     pdf.set_font('Arial', '', 10)
-    pdf.cell(0, 6, sanitize_text(f"Nome: {data.get('tecnico', {}).get('nome_completo', 'N/A')}"), ln=True)
-    pdf.cell(0, 6, sanitize_text(f"Função: {data.get('tecnico', {}).get('funcao', 'N/A')}"), ln=True)
+    
+    tecnico_info = data.get('tecnico', {}) or {}
+    pdf.cell(0, 6, sanitize_text(f"Nome: {tecnico_info.get('nome_completo', 'N/A')}"), ln=True)
+    
+    codigo_empresa = tecnico_info.get('codigo_empresa')
+    if codigo_empresa:
+        pdf.cell(0, 6, sanitize_text(f"Código/Matrícula: {codigo_empresa}"), ln=True)
+        
+    pdf.cell(0, 6, sanitize_text(f"Função: {tecnico_info.get('funcao', 'N/A')}"), ln=True)
     pdf.ln(8)
-    pdf.set_font('Arial', 'B', 12)
-    pdf.cell(0, 8, sanitize_text(f"2. Detalhes da OS ID: {data.get('id')}"), ln=True, border='B')
-    pdf.ln(4)
     def add_field(title, value):
         pdf.set_font('Arial', 'B', 11)
         pdf.cell(0, 7, sanitize_text(title), ln=True)
