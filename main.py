@@ -1,4 +1,5 @@
 import logging
+from telegram import Update
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -6,18 +7,25 @@ from telegram.ext import (
     MessageHandler,
     filters,
     CallbackQueryHandler,
+    ContextTypes,
 )
 
-# Importa nossas configurações e os handlers de cada módulo
 from config import TELEGRAM_TOKEN
 from handlers import common, registration, service_order, reports
+from database.utils import is_user_registered
 
-# Configuração do logging
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
 )
-logger = logging.getLogger(__name__)
 
+async def check_registration_and_start(update: Update, context: ContextTypes.DEFAULT_TYPE, start_function):
+    """Verifica se o usuário está cadastrado antes de iniciar um fluxo."""
+    if await is_user_registered(update.effective_user.id):
+        # CORREÇÃO: Passa o objeto 'update' original e completo para a próxima função.
+        return await start_function(update, context)
+    else:
+        await update.message.reply_text("Você precisa se cadastrar primeiro. Clique em '🆕 Abrir OS' para iniciar.")
+        return ConversationHandler.END
 
 def main() -> None:
     """Inicia o bot e configura todos os handlers."""
@@ -39,14 +47,13 @@ def main() -> None:
             service_order.ASK_PRIORITY: [CallbackQueryHandler(service_order.get_priority)],
             service_order.ASK_PROBLEM_DESC: [MessageHandler(filters.TEXT & ~filters.COMMAND, service_order.get_problem_description_and_save)],
         },
-        fallbacks=[CommandHandler("cancelar", common.cancel)],
-        per_user=True, per_chat=True,
+        fallbacks=[CommandHandler("cancelar", common.cancel)], per_user=True, per_chat=True,
     )
 
     close_os_conv = ConversationHandler(
-        entry_points=[MessageHandler(filters.Regex("^✅ Fechar OS$"), service_order.start_close_os)],
+        entry_points=[MessageHandler(filters.Regex("^✅ Fechar OS$"), lambda u, c: check_registration_and_start(u, c, service_order.start_close_os))],
         states={
-            service_order.SELECT_OS_TO_CLOSE: [CallbackQueryHandler(service_order.ask_for_solution)],
+            service_order.SELECT_OS_TO_CLOSE: [CallbackQueryHandler(service_order.ask_for_solution, pattern="^close_")],
             service_order.ASK_SOLUTION: [MessageHandler(filters.TEXT & ~filters.COMMAND, service_order.get_solution_and_ask_parts)],
             service_order.ASK_IF_PARTS: [CallbackQueryHandler(service_order.ask_part_name, pattern='^parts_yes$'), CallbackQueryHandler(service_order.ask_for_final_status, pattern='^parts_no$')],
             service_order.ASK_PART_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, service_order.get_part_name)],
@@ -57,17 +64,38 @@ def main() -> None:
             service_order.ASK_IF_NOTES: [CallbackQueryHandler(service_order.prompt_for_final_notes, pattern='^notes_yes$'), CallbackQueryHandler(service_order.finalize_without_notes, pattern='^notes_no$')],
             service_order.GET_FINAL_NOTES: [MessageHandler(filters.TEXT & ~filters.COMMAND, service_order.get_final_notes_and_save)],
         },
-        fallbacks=[CommandHandler("cancelar", common.cancel), CallbackQueryHandler(common.cancel, pattern='^cancel_close$')],
-        per_user=True, per_chat=True,
+        fallbacks=[CommandHandler("cancelar", common.cancel), CallbackQueryHandler(common.cancel, pattern='^cancel_close$')], per_user=True, per_chat=True,
     )
 
-    # ATUALIZADO: Handler da Conversa de Geração de Relatórios (mais simples)
     report_conv = ConversationHandler(
-        entry_points=[MessageHandler(filters.Regex("^📊 Relatórios$"), reports.start_report_generation)],
+        entry_points=[MessageHandler(filters.Regex("^📊 Relatórios$"), lambda u, c: check_registration_and_start(u, c, reports.start_report_generation))],
         states={
+            reports.CHOOSE_FILTER_TYPE: [CallbackQueryHandler(reports.handle_filter_choice)],
+            reports.SELECT_START_DATE: [CallbackQueryHandler(reports.handle_start_date_selection)],
+            reports.SELECT_END_DATE: [CallbackQueryHandler(reports.handle_end_date_selection)],
             reports.MANAGE_SELECTION: [CallbackQueryHandler(reports.manage_selection)],
         },
         fallbacks=[CommandHandler("cancelar", common.cancel), CallbackQueryHandler(common.cancel, pattern='^cancel_report$')],
+        per_user=True, per_chat=True,
+    )
+
+    # Handler de Conversa para a listagem paginada de OS ABERTAS
+    list_open_os_conv = ConversationHandler(
+        entry_points=[MessageHandler(filters.Regex("^📋 Listar Abertas$"), lambda u, c: check_registration_and_start(u, c, service_order.start_list_open_os))],
+        states={
+            service_order.PAGINATING_OS: [CallbackQueryHandler(service_order.navigate_os_page, pattern="^list_open")],
+        },
+        fallbacks=[CommandHandler("cancelar", common.cancel)],
+        per_user=True, per_chat=True,
+    )
+
+    # NOVO: Handler de Conversa para a listagem paginada de OS FECHADAS
+    list_closed_os_conv = ConversationHandler(
+        entry_points=[MessageHandler(filters.Regex("^🗂️ Listar Fechadas$"), lambda u, c: check_registration_and_start(u, c, service_order.start_list_closed_os))],
+        states={
+            service_order.PAGINATING_CLOSED_OS: [CallbackQueryHandler(service_order.navigate_closed_os_page, pattern="^list_closed")],
+        },
+        fallbacks=[CommandHandler("cancelar", common.cancel)],
         per_user=True, per_chat=True,
     )
 
@@ -76,16 +104,14 @@ def main() -> None:
     application.add_handler(open_os_conv)
     application.add_handler(close_os_conv)
     application.add_handler(report_conv)
-    application.add_handler(MessageHandler(filters.Regex("^📋 Listar Abertas$"), service_order.list_open_os))
+    application.add_handler(list_open_os_conv)
+    application.add_handler(list_closed_os_conv) # Adiciona o novo handler
     
     print("="*50)
-    print("🚀 BOT ATUALIZADO E INICIADO COM SUCESSO! 🚀")
-    print("O bot está online e aguardando por mensagens.")
-    print("Pressione Ctrl+C para parar o bot.")
+    print("🚀 BOT INICIADO COM SUCESSO! 🚀")
     print("="*50)
     
     application.run_polling()
-
 
 if __name__ == "__main__":
     main()

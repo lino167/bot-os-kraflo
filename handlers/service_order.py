@@ -1,12 +1,15 @@
 import logging
+import math
+import pandas as pd
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes, ConversationHandler
 
-# Importações dos nossos próprios módulos
 from handlers.common import cancel, MAIN_MENU_MARKUP
-from database.utils import get_user_data, save_new_os, get_open_os_by_user, close_os_in_db, is_user_registered
+from database.utils import (
+    get_user_data, save_new_os, get_open_os_paginated, get_open_os_count, 
+    close_os_in_db, get_closed_os_paginated, get_closed_os_count
+)
 
-# Configura o logger para este módulo
 logger = logging.getLogger(__name__)
 
 # --- Definição dos Estados da Conversa ---
@@ -14,19 +17,22 @@ logger = logging.getLogger(__name__)
 (ASK_EQUIPMENT, ASK_TAG, ASK_LOCATION, ASK_MAINT_TYPE, 
  ASK_PRIORITY, ASK_PROBLEM_DESC, CONFIRM_SAVE) = range(7, 14)
 
-# Estados para FECHAMENTO de OS (com a nova etapa de decisão)
+# Estados para FECHAMENTO de OS
 (SELECT_OS_TO_CLOSE, ASK_SOLUTION, ASK_IF_PARTS, ASK_PART_NAME, 
  ASK_PART_TAG, ASK_PART_QTY, ASK_MORE_PARTS, ASK_FINAL_STATUS, 
- ASK_IF_NOTES, GET_FINAL_NOTES) = range(14, 24) # Numeração estendida
+ ASK_IF_NOTES, GET_FINAL_NOTES) = range(14, 24)
 
-# --- FLUXO DE ABERTURA DE OS (Sem alterações) ---
-# (O código de abertura de OS permanece o mesmo)
+# Estados para PAGINAÇÃO
+PAGINATING_OS = range(28, 29)[0]
+PAGINATING_CLOSED_OS = range(29, 30)[0]
+OS_PER_PAGE = 5 # Define quantas OS mostrar por página
+
+# --- FLUXO DE ABERTURA E FECHAMENTO ---
 async def start_open_os(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     keyboard = [[InlineKeyboardButton("Sim, começar", callback_data="start_os")], [InlineKeyboardButton("Não, voltar", callback_data="cancel_os")]]
     reply_markup = InlineKeyboardMarkup(keyboard)
     await update.message.reply_text("Você selecionou 'Abrir OS'. Deseja iniciar o processo?", reply_markup=reply_markup)
     return CONFIRM_SAVE
-
 async def ask_for_equipment(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query
     await query.answer()
@@ -36,24 +42,20 @@ async def ask_for_equipment(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     else:
         await query.edit_message_text(text="Abertura de OS cancelada.")
         return await cancel(update, context)
-
 async def get_equipment_name(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     context.user_data['os_data'] = {'equipamento_nome': update.message.text}
     await update.message.reply_text("Entendido. Qual a TAG/identificador do equipamento?")
     return ASK_TAG
-
 async def get_equipment_tag(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     context.user_data['os_data']['equipamento_tag'] = update.message.text
     await update.message.reply_text("Qual o setor ou linha de produção onde o equipamento está localizado?")
     return ASK_LOCATION
-
 async def get_location(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     context.user_data['os_data']['localizacao'] = update.message.text
     keyboard = [[InlineKeyboardButton("🔧 Corretiva", callback_data="Corretiva")], [InlineKeyboardButton("📈 Preditiva", callback_data="Preditiva")], [InlineKeyboardButton("🗓️ Preventiva", callback_data="Preventiva")]]
     reply_markup = InlineKeyboardMarkup(keyboard)
     await update.message.reply_text("Qual o tipo de manutenção a ser realizada?", reply_markup=reply_markup)
     return ASK_MAINT_TYPE
-
 async def get_maintenance_type(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query
     await query.answer()
@@ -62,14 +64,12 @@ async def get_maintenance_type(update: Update, context: ContextTypes.DEFAULT_TYP
     reply_markup = InlineKeyboardMarkup(keyboard)
     await query.edit_message_text(text=f"Tipo: {query.data}. Agora, qual o nível de prioridade?", reply_markup=reply_markup)
     return ASK_PRIORITY
-
 async def get_priority(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query
     await query.answer()
     context.user_data['os_data']['prioridade'] = query.data
     await query.edit_message_text(text=f"Prioridade: {query.data}. Por favor, descreva o problema observado ou o plano de serviço.")
     return ASK_PROBLEM_DESC
-
 async def get_problem_description_and_save(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     context.user_data['os_data']['descricao_problema'] = update.message.text
     user_id = update.effective_user.id
@@ -77,10 +77,8 @@ async def get_problem_description_and_save(update: Update, context: ContextTypes
     if not user_db_data:
         await update.message.reply_text("Erro: não foi possível encontrar seus dados. Tente /start.", reply_markup=MAIN_MENU_MARKUP)
         return ConversationHandler.END
-    
     os_data = context.user_data['os_data']
     os_data.update({"status_os": "Aberta", "tecnico_id": user_id, "empresa_id": user_db_data['empresa_id']})
-    
     new_os = await save_new_os(os_data)
     if new_os:
         await update.message.reply_text(f"✅ Ordem de Serviço #{new_os['id']} aberta com sucesso!", reply_markup=MAIN_MENU_MARKUP)
@@ -88,13 +86,9 @@ async def get_problem_description_and_save(update: Update, context: ContextTypes
         await update.message.reply_text("❌ Ocorreu um erro ao salvar a OS.", reply_markup=MAIN_MENU_MARKUP)
     context.user_data.clear()
     return ConversationHandler.END
-
-
-# --- FLUXO DE FECHAMENTO DE OS (Atualizado com Notas Opcionais) ---
-
 async def start_close_os(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     user_id = update.effective_user.id
-    open_os_list = await get_open_os_by_user(user_id)
+    open_os_list = await get_open_os_paginated(user_id, 0, 50) 
     if not open_os_list:
         await update.message.reply_text("Você não possui nenhuma Ordem de Serviço aberta.", reply_markup=MAIN_MENU_MARKUP)
         return ConversationHandler.END
@@ -103,7 +97,6 @@ async def start_close_os(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     reply_markup = InlineKeyboardMarkup(keyboard)
     await update.message.reply_text("Selecione a Ordem de Serviço que deseja fechar:", reply_markup=reply_markup)
     return SELECT_OS_TO_CLOSE
-
 async def ask_for_solution(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query
     await query.answer()
@@ -114,7 +107,6 @@ async def ask_for_solution(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     context.user_data['os_id_to_close'] = os_id
     await query.edit_message_text(text=f"Fechando OS #{os_id}.\n\nDescreva o diagnóstico final e a solução aplicada.")
     return ASK_SOLUTION
-
 async def get_solution_and_ask_parts(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     context.user_data['close_solution'] = update.message.text
     context.user_data['parts_list'] = []
@@ -122,24 +114,20 @@ async def get_solution_and_ask_parts(update: Update, context: ContextTypes.DEFAU
     reply_markup = InlineKeyboardMarkup(keyboard)
     await update.message.reply_text("Houve troca de peças nesta manutenção?", reply_markup=reply_markup)
     return ASK_IF_PARTS
-
 async def ask_part_name(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query
     await query.answer()
     num_peca = len(context.user_data.get('parts_list', [])) + 1
     await query.edit_message_text(text=f"Ok, vamos adicionar as peças trocadas.\n\nPara a Peça {num_peca}, qual o nome dela?")
     return ASK_PART_NAME
-
 async def get_part_name(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     context.user_data['current_part_name'] = update.message.text
     await update.message.reply_text("Qual o TAG/Código (Part Number) dessa peça?")
     return ASK_PART_TAG
-
 async def get_part_tag(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     context.user_data['current_part_tag'] = update.message.text
     await update.message.reply_text("Qual a quantidade utilizada desta peça?")
     return ASK_PART_QTY
-
 async def get_part_qty_and_ask_more(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     try:
         qty = int(update.message.text)
@@ -152,7 +140,6 @@ async def get_part_qty_and_ask_more(update: Update, context: ContextTypes.DEFAUL
     except ValueError:
         await update.message.reply_text("Quantidade inválida. Por favor, digite apenas números.")
         return ASK_PART_QTY
-
 async def ask_for_final_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query
     await query.answer()
@@ -160,102 +147,157 @@ async def ask_for_final_status(update: Update, context: ContextTypes.DEFAULT_TYP
     reply_markup = InlineKeyboardMarkup(keyboard)
     await query.edit_message_text(text="Entendido. Qual o status final desta Ordem de Serviço?", reply_markup=reply_markup)
     return ASK_FINAL_STATUS
-
 async def get_final_status_and_ask_if_notes(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """NOVA ETAPA: Salva o status e pergunta se o usuário quer adicionar notas."""
     query = update.callback_query
     await query.answer()
     context.user_data['final_status'] = query.data
-    
-    keyboard = [
-        [InlineKeyboardButton("✍️ Sim, adicionar", callback_data="notes_yes")],
-        [InlineKeyboardButton("👍 Não, finalizar", callback_data="notes_no")],
-    ]
+    keyboard = [[InlineKeyboardButton("✍️ Sim, adicionar", callback_data="notes_yes")], [InlineKeyboardButton("👍 Não, finalizar", callback_data="notes_no")]]
     reply_markup = InlineKeyboardMarkup(keyboard)
     await query.edit_message_text(text=f"Status definido como '{query.data}'.\n\nDeseja adicionar notas finais?", reply_markup=reply_markup)
     return ASK_IF_NOTES
-
 async def prompt_for_final_notes(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """NOVA ETAPA: Pede para o usuário digitar as notas."""
     query = update.callback_query
     await query.answer()
     await query.edit_message_text(text="Ok. Por favor, adicione as notas finais, observações ou recomendações.")
     return GET_FINAL_NOTES
-
 async def _save_and_end_closing_conversation(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Função auxiliar para salvar os dados e finalizar a conversa, evitando repetição de código."""
     os_id = context.user_data['os_id_to_close']
-    
-    close_data = {
-        "diagnostico_solucao": context.user_data.get('close_solution', 'N/A'),
-        "status_os": context.user_data.get('final_status', 'Fechada'),
-        "notas_finais": context.user_data.get('final_notes', ''), # Pega a nota se existir
-        "data_fechamento": "now()"
-    }
-    
+    close_data = {"diagnostico_solucao": context.user_data.get('close_solution', 'N/A'), "status_os": context.user_data.get('final_status', 'Fechada'), "notas_finais": context.user_data.get('final_notes', ''), "data_fechamento": "now()"}
     parts_data = context.user_data.get('parts_list', [])
     success = await close_os_in_db(os_id, close_data, parts_data)
-
     chat_id = update.effective_chat.id
     if success:
         await context.bot.send_message(chat_id=chat_id, text=f"✅ Ordem de Serviço #{os_id} fechada com sucesso!", reply_markup=MAIN_MENU_MARKUP)
     else:
         await context.bot.send_message(chat_id=chat_id, text="❌ Ocorreu um erro ao fechar a OS.", reply_markup=MAIN_MENU_MARKUP)
-
     context.user_data.clear()
     return ConversationHandler.END
-
 async def get_final_notes_and_save(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Salva as notas finais digitadas e finaliza o fechamento."""
     context.user_data['final_notes'] = update.message.text
     return await _save_and_end_closing_conversation(update, context)
-
 async def finalize_without_notes(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Finaliza o fechamento sem adicionar notas."""
     query = update.callback_query
     await query.answer()
     await query.edit_message_text(text="Ok, finalizando o fechamento...")
-    context.user_data['final_notes'] = '' # Garante que as notas fiquem vazias
+    context.user_data['final_notes'] = ''
     return await _save_and_end_closing_conversation(update, context)
 
-async def list_open_os(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """
-    Verifica o cadastro do usuário, busca no banco e lista todas as
-    suas Ordens de Serviço com status 'Aberta'.
-    """
+
+# --- FLUXO DE LISTAGEM PAGINADA DE OS ABERTAS ---
+
+async def start_list_open_os(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     user_id = update.effective_user.id
+    total_os = await get_open_os_count(user_id)
+    if total_os == 0:
+        await update.message.reply_text("Você não possui nenhuma Ordem de Serviço aberta.", reply_markup=MAIN_MENU_MARKUP)
+        return ConversationHandler.END
+    context.user_data['total_os'] = total_os
+    context.user_data['current_page'] = 0
+    await display_os_page(update, context)
+    return PAGINATING_OS
 
-    # Passo 1: Verificar se o usuário está cadastrado antes de prosseguir.
-    # (É uma boa prática garantir isso, mesmo que o acesso seja por um botão)
-    if not await is_user_registered(user_id):
-        await update.message.reply_text(
-            "Você precisa estar cadastrado para ver suas Ordens de Serviço. "
-            "Por favor, inicie o cadastro clicando em '🆕 Abrir OS'."
-        )
-        return
+async def display_os_page(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    current_page = context.user_data['current_page']
+    total_os = context.user_data['total_os']
+    total_pages = math.ceil(total_os / OS_PER_PAGE)
+    os_list = await get_open_os_paginated(user_id, page=current_page, page_size=OS_PER_PAGE)
+    message = f"📋 **Suas Ordens de Serviço Abertas (Página {current_page + 1} de {total_pages}):**\n\n"
+    if not os_list:
+        message += "Nenhuma OS nesta página."
+    else:
+        for os in os_list:
+            message += (f"🔹 **OS #{os['id']}**\n   - **Equipamento:** {os['equipamento_nome']} ({os['equipamento_tag']})\n   - **Tipo:** {os['tipo_manutencao']}\n   - **Prioridade:** {os['prioridade']}\n--------------------\n")
+    keyboard = []
+    nav_buttons = []
+    if current_page > 0:
+        nav_buttons.append(InlineKeyboardButton("⬅️ Anterior", callback_data=f"list_open_prev_{current_page - 1}"))
+    if current_page < total_pages - 1:
+        nav_buttons.append(InlineKeyboardButton("Próxima ➡️", callback_data=f"list_open_next_{current_page + 1}"))
+    if nav_buttons:
+        keyboard.append(nav_buttons)
+    keyboard.append([InlineKeyboardButton("❌ Fechar Lista", callback_data="list_open_cancel")])
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    if update.callback_query:
+        await update.callback_query.edit_message_text(message, reply_markup=reply_markup, parse_mode='HTML')
+    else:
+        await update.message.reply_html(message, reply_markup=reply_markup)
 
-    # Passo 2: Buscar as OS abertas no banco de dados.
-    open_os_list = await get_open_os_by_user(user_id)
+async def navigate_os_page(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    query = update.callback_query
+    await query.answer()
+    action = query.data
+    if action == "list_open_cancel":
+        await query.edit_message_text("Lista de OS fechada.")
+        return ConversationHandler.END
+    try:
+        _, direction, page_str = action.split('_')
+        page = int(page_str)
+        context.user_data['current_page'] = page
+        await display_os_page(update, context)
+        return PAGINATING_OS
+    except ValueError:
+        await query.edit_message_text("Ocorreu um erro na navegação. Tente novamente.")
+        return ConversationHandler.END
 
-    # Se a lista estiver vazia, avisa o usuário.
-    if not open_os_list:
-        await update.message.reply_text(
-            "Você não possui nenhuma Ordem de Serviço aberta.",
-            reply_markup=MAIN_MENU_MARKUP
-        )
-        return
+# --- FLUXO DE LISTAGEM PAGINADA DE OS FECHADAS ---
 
-    # Passo 3: Formatar a mensagem com a lista de OS.
-    message = "<b>Suas Ordens de Serviço Abertas:</b>\n\n"
-    for os in open_os_list:
-        message += (
-            f"<b>OS #{os['id']}</b>\n"
-            f"  <b>Equipamento:</b> {os['equipamento_nome']} ({os['equipamento_tag']})\n"
-            f"  <b>Tipo:</b> {os['tipo_manutencao']}\n"
-            f"  <b>Prioridade:</b> {os['prioridade']}\n"
-            f"--------------------\n"
-        )
+async def start_list_closed_os(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    user_id = update.effective_user.id
+    total_os = await get_closed_os_count(user_id)
+    if total_os == 0:
+        await update.message.reply_text("Você não possui nenhuma Ordem de Serviço fechada ou pendente.", reply_markup=MAIN_MENU_MARKUP)
+        return ConversationHandler.END
+    context.user_data['total_closed_os'] = total_os
+    context.user_data['current_closed_page'] = 0
+    await display_closed_os_page(update, context)
+    return PAGINATING_CLOSED_OS
 
-    # Envia a mensagem formatada para o usuário.
-    # Usamos reply_html para que a formatação em negrito (<b>) funcione.
-    await update.message.reply_html(message)
+async def display_closed_os_page(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    current_page = context.user_data['current_closed_page']
+    total_os = context.user_data['total_closed_os']
+    total_pages = math.ceil(total_os / OS_PER_PAGE)
+    os_list = await get_closed_os_paginated(user_id, page=current_page, page_size=OS_PER_PAGE)
+    message = f"🗂️ **Seu Histórico de OS (Página {current_page + 1} de {total_pages}):**\n\n"
+    if not os_list:
+        message += "Nenhuma OS nesta página."
+    else:
+        for os in os_list:
+            data_fechamento_str = "N/A"
+            if os.get('data_fechamento'):
+                try:
+                    data_fechamento_str = pd.to_datetime(os['data_fechamento']).strftime('%d/%m/%Y')
+                except: pass
+            message += (f"🔹 **OS #{os['id']}**\n   - **Equipamento:** {os['equipamento_nome']}\n   - **Status:** {os['status_os']}\n   - **Data Fechamento:** {data_fechamento_str}\n--------------------\n")
+    keyboard = []
+    nav_buttons = []
+    if current_page > 0:
+        nav_buttons.append(InlineKeyboardButton("⬅️ Anterior", callback_data=f"list_closed_prev_{current_page - 1}"))
+    if current_page < total_pages - 1:
+        nav_buttons.append(InlineKeyboardButton("Próxima ➡️", callback_data=f"list_closed_next_{current_page + 1}"))
+    if nav_buttons:
+        keyboard.append(nav_buttons)
+    keyboard.append([InlineKeyboardButton("❌ Fechar Histórico", callback_data="list_closed_cancel")])
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    if update.callback_query:
+        await update.callback_query.edit_message_text(message, reply_markup=reply_markup, parse_mode='HTML')
+    else:
+        await update.message.reply_html(message, reply_markup=reply_markup)
+
+async def navigate_closed_os_page(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    query = update.callback_query
+    await query.answer()
+    action = query.data
+    if action == "list_closed_cancel":
+        await query.edit_message_text("Histórico de OS fechado.")
+        return ConversationHandler.END
+    try:
+        _, direction, page_str = action.split('_')
+        page = int(page_str)
+        context.user_data['current_closed_page'] = page
+        await display_closed_os_page(update, context)
+        return PAGINATING_CLOSED_OS
+    except ValueError:
+        await query.edit_message_text("Ocorreu um erro na navegação. Tente novamente.")
+        return ConversationHandler.END
