@@ -130,3 +130,28 @@ async def get_single_os_details(os_id: int) -> dict | None:
     except Exception as e:
         logger.error(f"Erro ao buscar detalhes da OS #{os_id}: {e}")
         return None
+
+async def get_closed_os_paginated(user_id: int, page: int, page_size: int) -> list | None:
+    """
+    Busca uma 'página' de OS fechadas ou pendentes para um determinado técnico.
+    """
+    try:
+        offset = page * page_size
+        response = supabase.table('ordens_de_servico').select(
+            'id, equipamento_nome, status_os, data_fechamento'
+        ).eq('tecnico_id', user_id).neq('status_os', 'Aberta').order('id', desc=True).range(offset, offset + page_size - 1).execute()
+        return response.data
+    except Exception as e:
+        logger.error(f"Erro ao buscar OS fechadas paginada para o usuário {user_id}: {e}")
+        return None
+
+async def get_closed_os_count(user_id: int) -> int:
+    """Conta o número total de OS fechadas ou pendentes para um usuário."""
+    try:
+        response = supabase.table('ordens_de_servico').select(
+            'id', count='exact'
+        ).eq('tecnico_id', user_id).neq('status_os', 'Aberta').execute()
+        return response.count
+    except Exception as e:
+        logger.error(f"Erro ao contar OS fechadas para o usuário {user_id}: {e}")
+        return 0

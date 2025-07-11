@@ -1,5 +1,5 @@
 import calendar
-from datetime import datetime, timedelta
+from datetime import datetime
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
 def create_calendar(year: int = None, month: int = None) -> InlineKeyboardMarkup:

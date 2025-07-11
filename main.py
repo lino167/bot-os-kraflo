@@ -1,23 +1,34 @@
 import logging
 from telegram import Update
 from telegram.ext import (
-    Application, CommandHandler, ConversationHandler, 
-    MessageHandler, filters, CallbackQueryHandler, ContextTypes
+    Application,
+    CommandHandler,
+    ConversationHandler,
+    MessageHandler,
+    filters,
+    CallbackQueryHandler,
+    ContextTypes,
 )
 
 from config import TELEGRAM_TOKEN
 from handlers import common, registration, service_order, reports
 from database.utils import is_user_registered
 
-logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO)
+logging.basicConfig(
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
+)
 
 async def check_registration_and_start(update: Update, context: ContextTypes.DEFAULT_TYPE, start_function):
-    """Verifica o cadastro antes de iniciar um fluxo."""
+    """Verifica se o usuário está cadastrado antes de iniciar um fluxo."""
     if await is_user_registered(update.effective_user.id):
         return await start_function(update, context)
     else:
-        await update.message.reply_text("Você precisa se cadastrar primeiro. Clique em '🆕 Abrir OS' para iniciar.")
-        return ConversationHandler.END
+        # Apenas o fluxo de abrir OS pode iniciar o cadastro
+        if start_function == registration.start_registration_or_os:
+            return await start_function(update, context)
+        else:
+            await update.message.reply_text("Você precisa se cadastrar primeiro. Clique em '🆕 Abrir OS' para iniciar.")
+            return ConversationHandler.END
 
 def main() -> None:
     """Inicia o bot e configura todos os handlers."""
@@ -37,7 +48,9 @@ def main() -> None:
             service_order.ASK_LOCATION: [MessageHandler(filters.TEXT & ~filters.COMMAND, service_order.get_location)],
             service_order.ASK_MAINT_TYPE: [CallbackQueryHandler(service_order.get_maintenance_type)],
             service_order.ASK_PRIORITY: [CallbackQueryHandler(service_order.get_priority)],
-            service_order.ASK_PROBLEM_DESC: [MessageHandler(filters.TEXT & ~filters.COMMAND, service_order.get_problem_description_and_save)],
+            service_order.ASK_PROBLEM_DESC: [MessageHandler(filters.TEXT & ~filters.COMMAND, service_order.get_problem_description_and_ask_photo)],
+            service_order.ASK_IF_PHOTO: [CallbackQueryHandler(service_order.prompt_for_photo, pattern='^photo_yes$'), CallbackQueryHandler(service_order.save_os_and_finish, pattern='^photo_no$')],
+            service_order.GET_PHOTO: [MessageHandler(filters.PHOTO, service_order.get_photo_and_save)],
         },
         fallbacks=[CommandHandler("cancelar", common.cancel)], per_user=True, per_chat=True,
     )
@@ -73,17 +86,23 @@ def main() -> None:
 
     list_open_os_conv = ConversationHandler(
         entry_points=[MessageHandler(filters.Regex("^📋 Listar Abertas$"), lambda u, c: check_registration_and_start(u, c, service_order.start_list_open_os))],
-        states={service_order.PAGINATING_OS: [CallbackQueryHandler(service_order.navigate_os_page, pattern="^list_open")]},
-        fallbacks=[CommandHandler("cancelar", common.cancel)], per_user=True, per_chat=True,
+        states={
+            service_order.PAGINATING_OS: [CallbackQueryHandler(service_order.navigate_os_page)],
+        },
+        fallbacks=[CallbackQueryHandler(service_order.cancel_pagination, pattern="^list_open_cancel$")],
+        per_user=True, per_chat=True,
     )
 
     list_closed_os_conv = ConversationHandler(
         entry_points=[MessageHandler(filters.Regex("^🗂️ Listar Fechadas$"), lambda u, c: check_registration_and_start(u, c, service_order.start_list_closed_os))],
-        states={service_order.PAGINATING_CLOSED_OS: [CallbackQueryHandler(service_order.navigate_closed_os_page, pattern="^list_closed")]},
-        fallbacks=[CommandHandler("cancelar", common.cancel)], per_user=True, per_chat=True,
+        states={
+            service_order.PAGINATING_CLOSED_OS: [CallbackQueryHandler(service_order.navigate_closed_os_page)],
+        },
+        fallbacks=[CallbackQueryHandler(service_order.cancel_pagination, pattern="^list_closed_cancel$")],
+        per_user=True, per_chat=True,
     )
 
-    # --- REGISTRO DE TODOS OS HANDLERS ---
+    # --- Adicionando todos os handlers à aplicação ---
     application.add_handler(CommandHandler("start", common.start))
     application.add_handler(open_os_conv)
     application.add_handler(close_os_conv)
@@ -91,7 +110,10 @@ def main() -> None:
     application.add_handler(list_open_os_conv)
     application.add_handler(list_closed_os_conv)
     
-    print("="*50); print("🚀 BOT INICIADO COM SUCESSO! 🚀"); print("="*50)
+    print("="*50)
+    print("🚀 BOT INICIADO COM SUCESSO! 🚀")
+    print("="*50)
+    
     application.run_polling()
 
 if __name__ == "__main__":
