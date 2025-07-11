@@ -2,27 +2,63 @@ import logging
 import os
 import pandas as pd
 from fpdf import FPDF
-from datetime import date, timedelta
+from datetime import date, timedelta, datetime
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes, ConversationHandler
 
 from database.utils import get_all_os_for_report, get_single_os_details
 from handlers.common import cancel
 from handlers.calendar_helper import create_calendar
-from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
 CHOOSE_FILTER_TYPE, SELECT_START_DATE, SELECT_END_DATE, MANAGE_SELECTION = range(24, 28)
 
 class PDF(FPDF):
+    """Classe personalizada para ter um cabeçalho profissional com logo e slogan."""
     def header(self):
-        self.set_font('Arial', 'B', 14)
-        self.cell(0, 10, 'Relatório de Ordens de Serviço - Kraflo', 0, 1, 'C')
+        # --- Configurações Gerais ---
+        self.set_draw_color(45, 52, 54) # Cinza escuro para as linhas
+        self.set_text_color(45, 52, 54) # Cinza escuro para o texto principal
+
+        # --- Logo ---
+        try:
+            # A biblioteca irá calcular a altura automaticamente com base na largura (w=40).
+            self.image('assets/Logo sem background.png', x=10, y=12, w=40)
+        except FileNotFoundError:
+            logger.error("Ficheiro da logo não encontrado! Verifique se 'assets/Logo sem background.png' existe.")
+            self.set_xy(10, 12)
+            self.set_font('Arial', 'B', 12)
+            self.cell(40, 25, 'KRAFLO', 0, 0, 'C')
+
+        # --- Bloco de Texto à Direita da Logo ---
+        self.set_xy(55, 22)
+
+        # Título Principal do Bot
+        self.set_font('Arial', 'B', 16)
+        self.cell(0, 8, 'Kraflo - Bot de Ordens de Serviço', 0, 1, 'L')
+        
+        # Slogan
+        self.set_x(55) # Garante o alinhamento à esquerda com o título
+        self.set_font('Arial', 'I', 10) # Usa itálico para o slogan
+        self.set_text_color(108, 122, 137) # Um cinza mais suave
+        self.cell(0, 6, 'Automação industrial', 0, 1, 'L')
+
+        # --- Título Específico do Documento ---
+        # Move para baixo para a próxima linha de informação
+        self.set_xy(10, 40) 
+        self.set_font('Arial', 'B', 12)
+        self.cell(0, 10, 'Relatório Detalhado de Ordem de Serviço', 0, 1, 'C')
+
+        # Adiciona um espaço antes do conteúdo da página começar
         self.ln(5)
+
     def footer(self):
         self.set_y(-15)
         self.set_font('Arial', 'I', 8)
+        # Linha acima do rodapé
+        self.set_draw_color(189, 195, 199) # Cinza claro
+        self.line(10, self.get_y() - 5, 200, self.get_y() - 5)
         self.cell(0, 10, f'Página {self.page_no()}', 0, 0, 'C')
 
 async def start_report_generation(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
