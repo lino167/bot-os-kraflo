@@ -24,7 +24,6 @@ logger = logging.getLogger(__name__)
 PAGINATING_OS, PAGINATING_CLOSED_OS = range(28, 30)
 OS_PER_PAGE = 5
 
-# ... (Todo o código para ABRIR e FECHAR OS permanece o mesmo) ...
 async def start_open_os(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     keyboard = [[InlineKeyboardButton("Sim, começar", callback_data="start_os")], [InlineKeyboardButton("Não, voltar", callback_data="cancel_os")]]
     reply_markup = InlineKeyboardMarkup(keyboard)

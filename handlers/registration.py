@@ -6,7 +6,6 @@ from telegram.ext import ContextTypes, ConversationHandler
 from config import supabase
 from handlers.ui_components import MAIN_MENU_MARKUP # <<< MUDANÇA AQUI
 from database.utils import is_user_registered
-# from handlers.service_order import start_open_os # Esta importação não é mais necessária aqui
 
 logger = logging.getLogger(__name__)
 

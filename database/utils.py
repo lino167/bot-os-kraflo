@@ -13,9 +13,13 @@ async def is_user_registered(user_id: int) -> bool:
         return False
 
 async def get_user_data(user_id: int) -> dict | None:
-    """Busca os dados de um técnico, incluindo o ID da empresa."""
+    """
+    Busca os dados de um técnico, incluindo o ID da empresa e o nome completo.
+    """
     try:
-        response = supabase.table('tecnicos').select('id_telegram, empresa_id').eq('id_telegram', user_id).single().execute()
+        response = supabase.table('tecnicos').select(
+            'id_telegram, empresa_id, nome_completo'
+        ).eq('id_telegram', user_id).single().execute()
         return response.data
     except Exception as e:
         logger.error(f"Erro ao buscar dados do usuário {user_id}: {e}")
