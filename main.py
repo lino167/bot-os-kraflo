@@ -11,8 +11,7 @@ from telegram.ext import (
 )
 
 from config import TELEGRAM_TOKEN
-from handlers import common, registration, service_order, reports
-from database.utils import is_user_registered
+from handlers import common, registration, service_order
 
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
@@ -99,14 +98,25 @@ def main() -> None:
         per_user=True, per_chat=True,
     )
 
+    # ATUALIZADO: Handler da Conversa de Geração de Relatórios (mais simples)
+    report_conv = ConversationHandler(
+        entry_points=[MessageHandler(filters.Regex("^📊 Relatórios$"), reports.start_report_generation)],
+        states={
+            reports.MANAGE_SELECTION: [CallbackQueryHandler(reports.manage_selection)],
+        },
+        fallbacks=[CommandHandler("cancelar", common.cancel), CallbackQueryHandler(common.cancel, pattern='^cancel_report$')],
+        per_user=True, per_chat=True,
+    )
+
     # --- Adicionando todos os handlers à aplicação ---
     application.add_handler(CommandHandler("start", common.start))
     application.add_handler(open_os_conv)
     application.add_handler(close_os_conv)
-    application.add_handler(report_conv)
-    application.add_handler(list_open_os_conv)
-    application.add_handler(list_closed_os_conv) # Adiciona o novo handler
-    
+
+    # Placeholders
+    application.add_handler(MessageHandler(filters.Regex("^📋 Listar Abertas$"), lambda u, c: u.message.reply_text("Funcionalidade 'Listar Abertas' em desenvolvimento.")))
+    application.add_handler(MessageHandler(filters.Regex("^📊 Relatórios$"), lambda u, c: u.message.reply_text("Funcionalidade 'Relatórios' em desenvolvimento.")))
+
     print("="*50)
     print("🚀 BOT INICIADO COM SUCESSO! 🚀")
     print("="*50)
