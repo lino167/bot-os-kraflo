@@ -12,20 +12,13 @@ from database.utils import (
 
 logger = logging.getLogger(__name__)
 
-# --- Definição dos Estados da Conversa ---
-# Estados para ABERTURA de OS
 (ASK_EQUIPMENT, ASK_TAG, ASK_LOCATION, ASK_MAINT_TYPE, 
  ASK_PRIORITY, ASK_PROBLEM_DESC, CONFIRM_SAVE) = range(7, 14)
-
-# Estados para FECHAMENTO de OS
 (SELECT_OS_TO_CLOSE, ASK_SOLUTION, ASK_IF_PARTS, ASK_PART_NAME, 
  ASK_PART_TAG, ASK_PART_QTY, ASK_MORE_PARTS, ASK_FINAL_STATUS, 
  ASK_IF_NOTES, GET_FINAL_NOTES) = range(14, 24)
-
-# Estados para PAGINAÇÃO
-PAGINATING_OS = range(28, 29)[0]
-PAGINATING_CLOSED_OS = range(29, 30)[0]
-OS_PER_PAGE = 5 # Define quantas OS mostrar por página
+PAGINATING_OS, PAGINATING_CLOSED_OS = range(28, 30)
+OS_PER_PAGE = 5
 
 # --- FLUXO DE ABERTURA E FECHAMENTO ---
 async def start_open_os(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -181,10 +174,6 @@ async def finalize_without_notes(update: Update, context: ContextTypes.DEFAULT_T
     await query.edit_message_text(text="Ok, finalizando o fechamento...")
     context.user_data['final_notes'] = ''
     return await _save_and_end_closing_conversation(update, context)
-
-
-# --- FLUXO DE LISTAGEM PAGINADA DE OS ABERTAS ---
-
 async def start_list_open_os(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     user_id = update.effective_user.id
     total_os = await get_open_os_count(user_id)
@@ -195,7 +184,6 @@ async def start_list_open_os(update: Update, context: ContextTypes.DEFAULT_TYPE)
     context.user_data['current_page'] = 0
     await display_os_page(update, context)
     return PAGINATING_OS
-
 async def display_os_page(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     current_page = context.user_data['current_page']
@@ -222,7 +210,6 @@ async def display_os_page(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.callback_query.edit_message_text(message, reply_markup=reply_markup, parse_mode='HTML')
     else:
         await update.message.reply_html(message, reply_markup=reply_markup)
-
 async def navigate_os_page(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query
     await query.answer()
@@ -239,9 +226,6 @@ async def navigate_os_page(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     except ValueError:
         await query.edit_message_text("Ocorreu um erro na navegação. Tente novamente.")
         return ConversationHandler.END
-
-# --- FLUXO DE LISTAGEM PAGINADA DE OS FECHADAS ---
-
 async def start_list_closed_os(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     user_id = update.effective_user.id
     total_os = await get_closed_os_count(user_id)
@@ -252,7 +236,6 @@ async def start_list_closed_os(update: Update, context: ContextTypes.DEFAULT_TYP
     context.user_data['current_closed_page'] = 0
     await display_closed_os_page(update, context)
     return PAGINATING_CLOSED_OS
-
 async def display_closed_os_page(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     current_page = context.user_data['current_closed_page']
@@ -284,7 +267,6 @@ async def display_closed_os_page(update: Update, context: ContextTypes.DEFAULT_T
         await update.callback_query.edit_message_text(message, reply_markup=reply_markup, parse_mode='HTML')
     else:
         await update.message.reply_html(message, reply_markup=reply_markup)
-
 async def navigate_closed_os_page(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query
     await query.answer()

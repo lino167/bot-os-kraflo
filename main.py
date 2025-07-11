@@ -1,26 +1,19 @@
 import logging
 from telegram import Update
 from telegram.ext import (
-    Application,
-    CommandHandler,
-    ConversationHandler,
-    MessageHandler,
-    filters,
-    CallbackQueryHandler,
-    ContextTypes,
+    Application, CommandHandler, ConversationHandler, 
+    MessageHandler, filters, CallbackQueryHandler, ContextTypes
 )
 
 from config import TELEGRAM_TOKEN
-from handlers import common, registration, service_order
+from handlers import common, registration, service_order, reports
+from database.utils import is_user_registered
 
-logging.basicConfig(
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
-)
+logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO)
 
 async def check_registration_and_start(update: Update, context: ContextTypes.DEFAULT_TYPE, start_function):
-    """Verifica se o usuário está cadastrado antes de iniciar um fluxo."""
+    """Verifica o cadastro antes de iniciar um fluxo."""
     if await is_user_registered(update.effective_user.id):
-        # CORREÇÃO: Passa o objeto 'update' original e completo para a próxima função.
         return await start_function(update, context)
     else:
         await update.message.reply_text("Você precisa se cadastrar primeiro. Clique em '🆕 Abrir OS' para iniciar.")
@@ -78,49 +71,27 @@ def main() -> None:
         per_user=True, per_chat=True,
     )
 
-    # Handler de Conversa para a listagem paginada de OS ABERTAS
     list_open_os_conv = ConversationHandler(
         entry_points=[MessageHandler(filters.Regex("^📋 Listar Abertas$"), lambda u, c: check_registration_and_start(u, c, service_order.start_list_open_os))],
-        states={
-            service_order.PAGINATING_OS: [CallbackQueryHandler(service_order.navigate_os_page, pattern="^list_open")],
-        },
-        fallbacks=[CommandHandler("cancelar", common.cancel)],
-        per_user=True, per_chat=True,
+        states={service_order.PAGINATING_OS: [CallbackQueryHandler(service_order.navigate_os_page, pattern="^list_open")]},
+        fallbacks=[CommandHandler("cancelar", common.cancel)], per_user=True, per_chat=True,
     )
 
-    # NOVO: Handler de Conversa para a listagem paginada de OS FECHADAS
     list_closed_os_conv = ConversationHandler(
         entry_points=[MessageHandler(filters.Regex("^🗂️ Listar Fechadas$"), lambda u, c: check_registration_and_start(u, c, service_order.start_list_closed_os))],
-        states={
-            service_order.PAGINATING_CLOSED_OS: [CallbackQueryHandler(service_order.navigate_closed_os_page, pattern="^list_closed")],
-        },
-        fallbacks=[CommandHandler("cancelar", common.cancel)],
-        per_user=True, per_chat=True,
+        states={service_order.PAGINATING_CLOSED_OS: [CallbackQueryHandler(service_order.navigate_closed_os_page, pattern="^list_closed")]},
+        fallbacks=[CommandHandler("cancelar", common.cancel)], per_user=True, per_chat=True,
     )
 
-    # ATUALIZADO: Handler da Conversa de Geração de Relatórios (mais simples)
-    report_conv = ConversationHandler(
-        entry_points=[MessageHandler(filters.Regex("^📊 Relatórios$"), reports.start_report_generation)],
-        states={
-            reports.MANAGE_SELECTION: [CallbackQueryHandler(reports.manage_selection)],
-        },
-        fallbacks=[CommandHandler("cancelar", common.cancel), CallbackQueryHandler(common.cancel, pattern='^cancel_report$')],
-        per_user=True, per_chat=True,
-    )
-
-    # --- Adicionando todos os handlers à aplicação ---
+    # --- REGISTRO DE TODOS OS HANDLERS ---
     application.add_handler(CommandHandler("start", common.start))
     application.add_handler(open_os_conv)
     application.add_handler(close_os_conv)
-
-    # Placeholders
-    application.add_handler(MessageHandler(filters.Regex("^📋 Listar Abertas$"), lambda u, c: u.message.reply_text("Funcionalidade 'Listar Abertas' em desenvolvimento.")))
-    application.add_handler(MessageHandler(filters.Regex("^📊 Relatórios$"), lambda u, c: u.message.reply_text("Funcionalidade 'Relatórios' em desenvolvimento.")))
-
-    print("="*50)
-    print("🚀 BOT INICIADO COM SUCESSO! 🚀")
-    print("="*50)
+    application.add_handler(report_conv)
+    application.add_handler(list_open_os_conv)
+    application.add_handler(list_closed_os_conv)
     
+    print("="*50); print("🚀 BOT INICIADO COM SUCESSO! 🚀"); print("="*50)
     application.run_polling()
 
 if __name__ == "__main__":
