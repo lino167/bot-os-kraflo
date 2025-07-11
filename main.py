@@ -10,38 +10,78 @@ from telegram.ext import (
     ContextTypes,
 )
 
+# Importa as nossas configurações e os handlers de cada módulo
 from config import TELEGRAM_TOKEN
 from handlers import common, registration, service_order, reports
 from database.utils import is_user_registered
 
+# Configuração do logging
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
 )
+logger = logging.getLogger(__name__)
 
+
+# =============================================================================
+# FUNÇÃO DE GUARDA (HELPER)
+# Definida aqui, no topo, para estar disponível para todos os handlers.
+# =============================================================================
 async def check_registration_and_start(update: Update, context: ContextTypes.DEFAULT_TYPE, start_function):
-    """Verifica se o usuário está cadastrado antes de iniciar um fluxo."""
-    if await is_user_registered(update.effective_user.id):
+    """
+    Função de guarda: verifica se o usuário está cadastrado antes de executar
+    uma ação protegida (abrir OS, relatórios, etc.).
+    """
+    user = update.effective_user
+    if not user:
+        logger.warning("Não foi possível identificar o usuário na mensagem.")
+        return ConversationHandler.END
+
+    logger.info(f"User {user.id} a tentar aceder à função protegida: {start_function.__name__}")
+    
+    if await is_user_registered(user.id):
+        logger.info(f"User {user.id} está registado. A prosseguir com a ação.")
+        # Passa o objeto 'update' original para que a próxima função tenha o contexto completo
         return await start_function(update, context)
     else:
-        # Apenas o fluxo de abrir OS pode iniciar o cadastro
-        if start_function == registration.start_registration_or_os:
-            return await start_function(update, context)
-        else:
-            await update.message.reply_text("Você precisa se cadastrar primeiro. Clique em '🆕 Abrir OS' para iniciar.")
-            return ConversationHandler.END
+        logger.warning(f"User {user.id} não está registado. Acesso negado. A instruí-lo para se registar.")
+        # Usa o update.message para garantir que podemos sempre enviar uma resposta de texto.
+        await update.message.reply_text("Você precisa de se registar primeiro. Use o comando /start para começar.")
+        return ConversationHandler.END
 
+
+# =============================================================================
+# FUNÇÃO PRINCIPAL
+# =============================================================================
 def main() -> None:
     """Inicia o bot e configura todos os handlers."""
+    logger.info("A iniciar a configuração do bot...")
     application = Application.builder().token(TELEGRAM_TOKEN).build()
 
-    # --- Handlers de Conversa ---
-    open_os_conv = ConversationHandler(
-        entry_points=[MessageHandler(filters.Regex("^🆕 Abrir OS$"), registration.start_registration_or_os)],
+    # --- DEFINIÇÃO DOS HANDLERS DE CONVERSA ---
+    logger.info("A configurar os handlers de conversa...")
+
+    # 1. Handler de Cadastro e Menu Principal (Gatilho: /start)
+    registration_conv = ConversationHandler(
+        entry_points=[CommandHandler("start", common.start)],
         states={
-            registration.NOME_EMPRESA: [MessageHandler(filters.TEXT & ~filters.COMMAND, registration.get_company_name)],
-            registration.NOME_COMPLETO: [MessageHandler(filters.TEXT & ~filters.COMMAND, registration.get_full_name)],
-            registration.FUNCAO: [MessageHandler(filters.TEXT & ~filters.COMMAND, registration.get_role)],
-            registration.SETOR: [MessageHandler(filters.TEXT & ~filters.COMMAND, registration.get_sector_and_save)],
+            registration.ASK_COMPANY_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, registration.ask_if_company_code)],
+            registration.ASK_IF_COMPANY_CODE: [
+                CallbackQueryHandler(registration.prompt_for_company_code, pattern='^code_yes$'),
+                CallbackQueryHandler(registration.ask_name_directly, pattern='^code_no$')
+            ],
+            registration.GET_COMPANY_CODE: [MessageHandler(filters.TEXT & ~filters.COMMAND, registration.get_company_code_and_ask_name)],
+            registration.GET_FULL_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, registration.get_full_name_and_ask_role)],
+            registration.GET_ROLE: [MessageHandler(filters.TEXT & ~filters.COMMAND, registration.get_role_and_ask_sector)],
+            registration.GET_SECTOR: [MessageHandler(filters.TEXT & ~filters.COMMAND, registration.get_sector_and_save)],
+        },
+        fallbacks=[CommandHandler("cancelar", common.cancel)],
+        per_user=True, per_chat=True,
+    )
+
+    # 2. Handler de Abertura de OS (Gatilho: botão do menu)
+    open_os_conv = ConversationHandler(
+        entry_points=[MessageHandler(filters.Regex("^🆕 Abrir OS$"), lambda u, c: check_registration_and_start(u, c, service_order.start_open_os))],
+        states={
             service_order.CONFIRM_SAVE: [CallbackQueryHandler(service_order.ask_for_equipment, pattern='^start_os$|^cancel_os$')],
             service_order.ASK_EQUIPMENT: [MessageHandler(filters.TEXT & ~filters.COMMAND, service_order.get_equipment_name)],
             service_order.ASK_TAG: [MessageHandler(filters.TEXT & ~filters.COMMAND, service_order.get_equipment_tag)],
@@ -49,12 +89,17 @@ def main() -> None:
             service_order.ASK_MAINT_TYPE: [CallbackQueryHandler(service_order.get_maintenance_type)],
             service_order.ASK_PRIORITY: [CallbackQueryHandler(service_order.get_priority)],
             service_order.ASK_PROBLEM_DESC: [MessageHandler(filters.TEXT & ~filters.COMMAND, service_order.get_problem_description_and_ask_photo)],
-            service_order.ASK_IF_PHOTO: [CallbackQueryHandler(service_order.prompt_for_photo, pattern='^photo_yes$'), CallbackQueryHandler(service_order.save_os_and_finish, pattern='^photo_no$')],
+            service_order.ASK_IF_PHOTO: [
+                CallbackQueryHandler(service_order.prompt_for_photo, pattern='^photo_yes$'),
+                CallbackQueryHandler(service_order.save_os_and_finish, pattern='^photo_no$')
+            ],
             service_order.GET_PHOTO: [MessageHandler(filters.PHOTO, service_order.get_photo_and_save)],
         },
-        fallbacks=[CommandHandler("cancelar", common.cancel)], per_user=True, per_chat=True,
+        fallbacks=[CommandHandler("cancelar", common.cancel)],
+        per_user=True, per_chat=True,
     )
-
+    
+    # 3. Handler de Fechamento de OS
     close_os_conv = ConversationHandler(
         entry_points=[MessageHandler(filters.Regex("^✅ Fechar OS$"), lambda u, c: check_registration_and_start(u, c, service_order.start_close_os))],
         states={
@@ -69,9 +114,11 @@ def main() -> None:
             service_order.ASK_IF_NOTES: [CallbackQueryHandler(service_order.prompt_for_final_notes, pattern='^notes_yes$'), CallbackQueryHandler(service_order.finalize_without_notes, pattern='^notes_no$')],
             service_order.GET_FINAL_NOTES: [MessageHandler(filters.TEXT & ~filters.COMMAND, service_order.get_final_notes_and_save)],
         },
-        fallbacks=[CommandHandler("cancelar", common.cancel), CallbackQueryHandler(common.cancel, pattern='^cancel_close$')], per_user=True, per_chat=True,
+        fallbacks=[CommandHandler("cancelar", common.cancel), CallbackQueryHandler(common.cancel, pattern='^cancel_close$')],
+        per_user=True, per_chat=True,
     )
 
+    # 4. Handler de Relatórios
     report_conv = ConversationHandler(
         entry_points=[MessageHandler(filters.Regex("^📊 Relatórios$"), lambda u, c: check_registration_and_start(u, c, reports.start_report_generation))],
         states={
@@ -84,37 +131,50 @@ def main() -> None:
         per_user=True, per_chat=True,
     )
 
+    # 5. Handler de Listagem de OS Abertas
     list_open_os_conv = ConversationHandler(
         entry_points=[MessageHandler(filters.Regex("^📋 Listar Abertas$"), lambda u, c: check_registration_and_start(u, c, service_order.start_list_open_os))],
         states={
-            service_order.PAGINATING_OS: [CallbackQueryHandler(service_order.navigate_os_page)],
+            service_order.PAGINATING_OS: [CallbackQueryHandler(service_order.navigate_os_page, pattern="^list_open")],
         },
         fallbacks=[CallbackQueryHandler(service_order.cancel_pagination, pattern="^list_open_cancel$")],
         per_user=True, per_chat=True,
     )
 
+    # 6. Handler de Listagem de OS Fechadas
     list_closed_os_conv = ConversationHandler(
         entry_points=[MessageHandler(filters.Regex("^🗂️ Listar Fechadas$"), lambda u, c: check_registration_and_start(u, c, service_order.start_list_closed_os))],
         states={
-            service_order.PAGINATING_CLOSED_OS: [CallbackQueryHandler(service_order.navigate_closed_os_page)],
+            service_order.PAGINATING_CLOSED_OS: [CallbackQueryHandler(service_order.navigate_closed_os_page, pattern="^list_closed")],
         },
         fallbacks=[CallbackQueryHandler(service_order.cancel_pagination, pattern="^list_closed_cancel$")],
         per_user=True, per_chat=True,
     )
-
-    # --- Adicionando todos os handlers à aplicação ---
-    application.add_handler(CommandHandler("start", common.start))
+    
+    # --- REGISTO DE TODOS OS HANDLERS NA APLICAÇÃO ---
+    logger.info("A adicionar handlers à aplicação...")
+    
+    # O handler de cadastro é o mais importante e deve vir primeiro para lidar com o /start
+    application.add_handler(registration_conv)
+    
+    # Adicionamos os outros handlers de conversa
     application.add_handler(open_os_conv)
     application.add_handler(close_os_conv)
     application.add_handler(report_conv)
     application.add_handler(list_open_os_conv)
     application.add_handler(list_closed_os_conv)
     
+    logger.info("Todos os handlers foram adicionados.")
+    
+    # Mensagem de sucesso na consola
     print("="*50)
     print("🚀 BOT INICIADO COM SUCESSO! 🚀")
     print("="*50)
     
+    # Inicia o bot
+    logger.info("Bot pronto e a iniciar o polling.")
     application.run_polling()
+
 
 if __name__ == "__main__":
     main()
