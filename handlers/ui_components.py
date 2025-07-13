@@ -1,9 +1,9 @@
 from telegram import ReplyKeyboardMarkup
 
-# Teclado do menu principal, agora num local centralizado.
+# Teclado do menu principal atualizado com a nova opção de edição
 REPLY_KEYBOARD = [
     ["🆕 Abrir OS", "✅ Fechar OS"],
     ["📋 Listar Abertas", "🗂️ Listar Fechadas"],
-    ["📊 Relatórios"],
+    ["📊 Relatórios", "✏️ Editar OS"],
 ]
 MAIN_MENU_MARKUP = ReplyKeyboardMarkup(REPLY_KEYBOARD, resize_keyboard=True)

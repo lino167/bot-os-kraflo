@@ -1,18 +1,12 @@
 import logging
 from telegram import Update
 from telegram.ext import (
-    Application,
-    CommandHandler,
-    ConversationHandler,
-    MessageHandler,
-    filters,
-    CallbackQueryHandler,
-    ContextTypes,
+    Application, CommandHandler, ConversationHandler, 
+    MessageHandler, filters, CallbackQueryHandler, ContextTypes
 )
 
-# Importa as nossas configurações e os handlers de cada módulo
 from config import TELEGRAM_TOKEN
-from handlers import common, registration, service_order, reports
+from handlers import common, registration, service_order, reports, os_edit # Importa o novo módulo
 from database.utils import is_user_registered
 
 # Configuração do logging
@@ -150,6 +144,24 @@ def main() -> None:
         fallbacks=[CallbackQueryHandler(service_order.cancel_pagination, pattern="^list_closed_cancel$")],
         per_user=True, per_chat=True,
     )
+
+    # 7. Handler de Edição de OS
+    edit_os_conv = ConversationHandler(
+        entry_points=[MessageHandler(filters.Regex("^✏️ Editar OS$"), lambda u, c: check_registration_and_start(u, c, os_edit.start_edit_os))],
+        states={
+            os_edit.PAGINATING_EDIT_OS: [
+                CallbackQueryHandler(os_edit.navigate_editable_os_page, pattern="^edit_nav_"),
+                CallbackQueryHandler(os_edit.show_edit_menu, pattern="^edit_select_os_"),
+            ],
+            os_edit.SELECT_FIELD: [
+                CallbackQueryHandler(os_edit.prompt_for_new_value, pattern="^edit_field_"),
+                CallbackQueryHandler(common.cancel, pattern="^edit_finish$"),
+            ],
+            os_edit.GET_NEW_VALUE: [MessageHandler(filters.TEXT & ~filters.COMMAND, os_edit.update_field_and_return_to_menu)],
+        },
+        fallbacks=[CallbackQueryHandler(common.cancel, pattern="^edit_cancel$"), CommandHandler("cancelar", common.cancel)],
+        per_user=True, per_chat=True,
+    )
     
     # --- REGISTO DE TODOS OS HANDLERS NA APLICAÇÃO ---
     logger.info("A adicionar handlers à aplicação...")
@@ -163,10 +175,11 @@ def main() -> None:
     application.add_handler(report_conv)
     application.add_handler(list_open_os_conv)
     application.add_handler(list_closed_os_conv)
+    application.add_handler(edit_os_conv)
     
     logger.info("Todos os handlers foram adicionados.")
     
-    # Mensagem de sucesso na consola
+    # Mensagem de sucesso no console
     print("="*50)
     print("🚀 BOT INICIADO COM SUCESSO! 🚀")
     print("="*50)
