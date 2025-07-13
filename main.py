@@ -155,9 +155,10 @@ def main() -> None:
             ],
             os_edit.SELECT_FIELD: [
                 CallbackQueryHandler(os_edit.prompt_for_new_value, pattern="^edit_field_"),
-                CallbackQueryHandler(common.cancel, pattern="^edit_finish$"),
+                CallbackQueryHandler(os_edit.finish_editing, pattern="^edit_finish$"),
             ],
-            os_edit.GET_NEW_VALUE: [MessageHandler(filters.TEXT & ~filters.COMMAND, os_edit.update_field_and_return_to_menu)],
+            os_edit.GET_NEW_VALUE_TEXT: [MessageHandler(filters.TEXT & ~filters.COMMAND, os_edit.update_field_from_text)],
+            os_edit.GET_NEW_VALUE_BUTTON: [CallbackQueryHandler(os_edit.update_field_from_button)],
         },
         fallbacks=[CallbackQueryHandler(common.cancel, pattern="^edit_cancel$"), CommandHandler("cancelar", common.cancel)],
         per_user=True, per_chat=True,

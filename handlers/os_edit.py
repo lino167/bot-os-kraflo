@@ -1,24 +1,25 @@
 import logging
 import math
-import pandas as pd
-from datetime import date
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes, ConversationHandler
 
 from handlers.common import cancel
 from database.utils import (
-    get_all_user_os_paginated, get_all_user_os_count, 
+    get_editable_os_paginated, get_editable_os_count,
     update_os_field, get_single_os_details
+)
+from handlers.ui_components import (
+    PRIORIDADE_KEYBOARD, TIPO_MANUTENCAO_KEYBOARD, STATUS_OS_KEYBOARD
 )
 
 logger = logging.getLogger(__name__)
 
 # --- Definição dos Estados da Conversa ---
-SELECT_OS, SELECT_FIELD, GET_NEW_VALUE, PAGINATING_EDIT_OS = range(50, 54)
+PAGINATING_EDIT_OS, SELECT_FIELD, GET_NEW_VALUE_TEXT, GET_NEW_VALUE_BUTTON = range(50, 54)
 OS_PER_PAGE = 5
 
-# Mapeamento dos campos editáveis para nomes amigáveis
-EDITABLE_FIELDS = {
+# Mapeamento dos campos para nomes amigáveis
+ALL_EDITABLE_FIELDS = {
     "equipamento_nome": "Nome do Equipamento",
     "equipamento_tag": "TAG do Equipamento",
     "localizacao": "Localização",
@@ -30,12 +31,25 @@ EDITABLE_FIELDS = {
     "status_os": "Status da OS",
 }
 
+# Campos que podem ser editados quando a OS está 'Aberta'
+FIELDS_FOR_OPEN_OS = [
+    "equipamento_nome", "equipamento_tag", "localizacao",
+    "tipo_manutencao", "prioridade", "descricao_problema"
+]
+
+# Campos que usam botões em vez de texto
+FIELDS_WITH_BUTTONS = {
+    "tipo_manutencao": TIPO_MANUTENCAO_KEYBOARD,
+    "prioridade": PRIORIDADE_KEYBOARD,
+    "status_os": STATUS_OS_KEYBOARD
+}
+
 async def start_edit_os(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Inicia o fluxo de edição, mostrando a primeira página de OS."""
+    """Inicia o fluxo de edição, mostrando a primeira página de OS editáveis."""
     user_id = update.effective_user.id
-    total_os = await get_all_user_os_count(user_id)
+    total_os = await get_editable_os_count(user_id)
     if total_os == 0:
-        await update.message.reply_text("Você ainda não possui nenhuma Ordem de Serviço para editar.")
+        await update.message.reply_text("Você não possui Ordens de Serviço abertas ou que foram fechadas hoje para editar.")
         return ConversationHandler.END
     
     context.user_data['edit_total_os'] = total_os
@@ -47,11 +61,11 @@ async def start_edit_os(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
 async def display_editable_os_page(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Exibe uma página de OS editáveis com botões de navegação."""
     user_id = update.effective_user.id
-    current_page = context.user_data['edit_current_page']
-    total_os = context.user_data['edit_total_os']
+    current_page = context.user_data.get('edit_current_page', 0)
+    total_os = context.user_data.get('edit_total_os', 0)
     total_pages = math.ceil(total_os / OS_PER_PAGE)
 
-    os_list = await get_all_user_os_paginated(user_id, page=current_page, page_size=OS_PER_PAGE)
+    os_list = await get_editable_os_paginated(user_id, page=current_page, page_size=OS_PER_PAGE)
     
     message = f"✏️ **Editar Ordem de Serviço (Página {current_page + 1} de {total_pages})**\n\nSelecione a OS que deseja modificar:"
     
@@ -86,40 +100,39 @@ async def navigate_editable_os_page(update: Update, context: ContextTypes.DEFAUL
     return PAGINATING_EDIT_OS
 
 async def show_edit_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Mostra os campos editáveis para a OS selecionada, após validar as regras de negócio."""
+    """Mostra os campos editáveis para a OS selecionada, aplicando as regras de negócio."""
     query = update.callback_query
-    await query.answer()
+    os_id = context.user_data.get('os_id_to_edit')
 
-    if not query.data.startswith("edit_select_os_"):
-        await query.edit_message_text("Ação inválida.")
-        return await cancel(update, context)
-
-    os_id = int(query.data.split('_')[-1])
-    context.user_data['os_id_to_edit'] = os_id
+    if query:
+        await query.answer()
+        if query.data.startswith("edit_select_os_"):
+            os_id = int(query.data.split('_')[-1])
+            context.user_data['os_id_to_edit'] = os_id
 
     os_details = await get_single_os_details(os_id)
     if not os_details:
-        await query.edit_message_text("Não foi possível encontrar os detalhes desta OS.")
+        error_message = "Não foi possível encontrar os detalhes desta OS."
+        if query: await query.edit_message_text(error_message)
+        else: await update.message.reply_text(error_message)
         return await cancel(update, context)
         
     context.user_data['os_details'] = os_details
 
-    # --- REGRA DE NEGÓCIO: SÓ PODE EDITAR OS FECHADA NO MESMO DIA ---
+    # --- LÓGICA DE NEGÓCIO PARA CAMPOS EDITÁVEIS ---
     status = os_details.get('status_os')
-    data_fechamento = os_details.get('data_fechamento')
-
-    if status != 'Aberta' and data_fechamento:
-        data_fechamento_date = pd.to_datetime(data_fechamento).date()
-        if data_fechamento_date != date.today():
-            await query.edit_message_text(
-                f"🚫 **Acesso Negado**\n\nA Ordem de Serviço #{os_id} foi fechada em {data_fechamento_date.strftime('%d/%m/%Y')} "
-                f"e só podia ser editada nesse mesmo dia."
-            )
-            return ConversationHandler.END
-    # --- FIM DA REGRA ---
+    
+    allowed_fields = {}
+    if status == 'Aberta':
+        for key in FIELDS_FOR_OPEN_OS:
+            allowed_fields[key] = ALL_EDITABLE_FIELDS[key]
+    else: # Fechada ou Pendente
+        for key, value in ALL_EDITABLE_FIELDS.items():
+            if key != 'status_os': # Não pode editar o status se já não estiver aberta
+                allowed_fields[key] = value
 
     keyboard = []
-    for field_key, field_name in EDITABLE_FIELDS.items():
+    for field_key, field_name in allowed_fields.items():
         keyboard.append([InlineKeyboardButton(field_name, callback_data=f"edit_field_{field_key}")])
     keyboard.append([InlineKeyboardButton("✅ Concluir Edição", callback_data="edit_finish")])
 
@@ -128,49 +141,103 @@ async def show_edit_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     details_text = (
         f"**Editando OS #{os_id}**\n"
         f"**Equipamento:** {os_details.get('equipamento_nome', 'N/A')}\n"
-        f"**Status Atual:** {os_details.get('status_os', 'N/A')}\n\n"
+        f"**Status Atual:** {status}\n\n"
         "Selecione o campo que deseja alterar:"
     )
-    await query.edit_message_text(details_text, reply_markup=reply_markup, parse_mode='Markdown')
+    
+    if query:
+        await query.edit_message_text(details_text, reply_markup=reply_markup, parse_mode='Markdown')
+    else:
+        await update.message.reply_markdown(details_text, reply_markup=reply_markup)
+        
     return SELECT_FIELD
 
 async def prompt_for_new_value(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Pede ao usuário o novo valor para o campo selecionado."""
+    """Pede ao usuário o novo valor, mostrando botões ou pedindo texto conforme o campo."""
     query = update.callback_query
     await query.answer()
 
-    field_key = query.data.split('_')[-1]
-    field_name = EDITABLE_FIELDS.get(field_key, "Desconhecido")
-    
+    _, _, field_key = query.data.partition('edit_field_')
     context.user_data['field_to_edit'] = field_key
     
+    field_name = ALL_EDITABLE_FIELDS.get(field_key, "Desconhecido")
     current_value = context.user_data.get('os_details', {}).get(field_key, 'não preenchido')
     
-    await query.edit_message_text(f"A editar: **{field_name}**\nValor atual: `{current_value}`\n\nPor favor, envie o novo valor:", parse_mode='Markdown')
-    return GET_NEW_VALUE
+    # Se o campo deve usar botões, mostra o teclado correspondente
+    if field_key in FIELDS_WITH_BUTTONS:
+        keyboard = FIELDS_WITH_BUTTONS[field_key]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await query.edit_message_text(
+            f"A editar: **{field_name}**\nValor atual: `{current_value}`\n\nSelecione o novo valor:",
+            reply_markup=reply_markup,
+            parse_mode='Markdown'
+        )
+        return GET_NEW_VALUE_BUTTON
+    
+    # Caso contrário, pede para o usuário digitar o texto
+    else:
+        await query.edit_message_text(
+            f"A editar: **{field_name}**\nValor atual: `{current_value}`\n\nPor favor, envie o novo valor:",
+            parse_mode='Markdown'
+        )
+        return GET_NEW_VALUE_TEXT
 
-async def update_field_and_return_to_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Atualiza o campo no banco de dados e volta para o menu de edição."""
+async def update_field_from_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Atualiza o campo a partir de um clique de botão e volta ao menu."""
+    query = update.callback_query
+    await query.answer()
+
+    new_value = query.data
+    os_id = context.user_data['os_id_to_edit']
+    field_key = context.user_data['field_to_edit']
+
+    success = await update_os_field(os_id, field_key, new_value)
+    
+    if success:
+        await query.edit_message_text("✅ Campo atualizado com sucesso!")
+    else:
+        await query.edit_message_text("❌ Erro ao atualizar o campo.")
+        
+    # Pausa por um momento para o usuário ver a mensagem de sucesso/erro
+    await context.bot.send_chat_action(chat_id=update.effective_chat.id, action='typing')
+    import asyncio
+    await asyncio.sleep(1.5)
+
+    return await show_edit_menu(update, context)
+
+async def update_field_from_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Atualiza o campo a partir de um texto enviado e volta ao menu."""
     new_value = update.message.text
     os_id = context.user_data['os_id_to_edit']
     field_key = context.user_data['field_to_edit']
     
-    await update.message.reply_text("A atualizar informação, aguarde...")
+    # Deleta a mensagem do usuário e a mensagem de prompt para manter o chat limpo
+    # (A mensagem de prompt é a última mensagem do bot)
+    await context.bot.delete_message(chat_id=update.effective_chat.id, message_id=update.message.message_id)
+    if context.user_data.get('last_bot_message_id'):
+        await context.bot.delete_message(chat_id=update.effective_chat.id, message_id=context.user_data['last_bot_message_id'])
+
     success = await update_os_field(os_id, field_key, new_value)
     
     if success:
         await update.message.reply_text("✅ Campo atualizado com sucesso!")
-        context.user_data.pop('os_details', None) 
     else:
         await update.message.reply_text("❌ Erro ao atualizar o campo.")
         
-    class MockQuery:
-        def __init__(self, msg, data):
-            self.message = msg
-            self.data = data
-        async def answer(self): pass
+    return await show_edit_menu(update, context)
 
-    mock_query_update = Update(update.update_id, message=update.message)
-    mock_query_update.callback_query = MockQuery(update.message, f"edit_select_os_{os_id}")
-
-    return await show_edit_menu(mock_query_update, context)
+async def finish_editing(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """
+    Encerra o fluxo de edição de forma limpa, enviando uma mensagem de sucesso.
+    """
+    query = update.callback_query
+    await query.answer()
+    await query.edit_message_text(
+        text="✅ Edição concluída com sucesso!",
+        reply_markup=None # Remove os botões
+    )
+    # Limpa os dados da conversa para a próxima edição
+    if context.user_data:
+        context.user_data.clear()
+        
+    return ConversationHandler.END

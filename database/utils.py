@@ -1,5 +1,6 @@
 import logging
 from config import supabase
+from datetime import datetime, time
 
 logger = logging.getLogger(__name__)
 
@@ -162,34 +163,45 @@ async def get_closed_os_count(user_id: int) -> int:
         logger.error(f"Erro ao contar OS fechadas para o usuário {user_id}: {e}")
         return 0
     
-async def get_all_user_os_paginated(user_id: int, page: int, page_size: int) -> list | None:
-    """Busca uma 'página' de TODAS as OS de um determinado técnico."""
+async def get_editable_os_count(user_id: int) -> int:
+    """Conta o número total de OS editáveis (status 'Aberta' ou fechadas hoje)."""
     try:
-        offset = page * page_size
-        response = supabase.table('ordens_de_servico').select(
-            'id, equipamento_nome, status_os, data_abertura'
-        ).eq('tecnico_id', user_id).order('id', desc=True).range(offset, offset + page_size - 1).execute()
-        return response.data
-    except Exception as e:
-        logger.error(f"Erro ao buscar todas as OS paginadas para o usuário {user_id}: {e}")
-        return None
-
-async def get_all_user_os_count(user_id: int) -> int:
-    """Conta o número total de TODAS as OS de um usuário."""
-    try:
+        today_start = datetime.combine(datetime.today(), time.min).astimezone().isoformat()
+        today_end = datetime.combine(datetime.today(), time.max).astimezone().isoformat()
+        
+        filter_str = f"status_os.eq.Aberta,and(status_os.neq.Aberta,data_fechamento.gte.{today_start},data_fechamento.lte.{today_end})"
+        
         response = supabase.table('ordens_de_servico').select(
             'id', count='exact'
-        ).eq('tecnico_id', user_id).execute()
+        ).eq('tecnico_id', user_id).or_(filter_str).execute()
+        
         return response.count
     except Exception as e:
-        logger.error(f"Erro ao contar todas as OS para o usuário {user_id}: {e}")
+        logger.error(f"Erro ao contar OS editáveis para o usuário {user_id}: {e}")
         return 0
+    
+async def get_editable_os_paginated(user_id: int, page: int, page_size: int) -> list | None:
+    """Busca uma 'página' de OS editáveis (status 'Aberta' ou fechadas hoje)."""
+    try:
+        offset = page * page_size
+        today_start = datetime.combine(datetime.today(), time.min).astimezone().isoformat()
+        today_end = datetime.combine(datetime.today(), time.max).astimezone().isoformat()
+
+        filter_str = f"status_os.eq.Aberta,and(status_os.neq.Aberta,data_fechamento.gte.{today_start},data_fechamento.lte.{today_end})"
+
+        response = supabase.table('ordens_de_servico').select(
+            'id, equipamento_nome, status_os, data_abertura'
+        ).eq('tecnico_id', user_id).or_(filter_str).order('id', desc=True).range(offset, offset + page_size - 1).execute()
+        
+        return response.data
+    except Exception as e:
+        logger.error(f"Erro ao buscar OS editáveis paginada para o usuário {user_id}: {e}")
+        return None
 
 async def update_os_field(os_id: int, field_name: str, new_value: any) -> bool:
     """Atualiza um campo específico de uma Ordem de Serviço."""
     try:
         response = supabase.table('ordens_de_servico').update({field_name: new_value}).eq('id', os_id).execute()
-        # A API de update não retorna dados por padrão, então verificamos se não houve erro
         if not hasattr(response, 'error') or response.error is None:
             logger.info(f"Campo '{field_name}' da OS #{os_id} atualizado com sucesso.")
             return True
