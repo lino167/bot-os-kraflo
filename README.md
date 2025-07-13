@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="./assets/Logo sem background.png" alt="Kraflo Logo" width="150"/>
+  <img src="./assets/Log redonda.png" alt="Kraflo Logo" width="150"/>
   <h1>Kraflo OS Bot - Gestor de Ordens de Serviço</h1>
   <p><strong>Automação industrial</strong></p>
   <p>
