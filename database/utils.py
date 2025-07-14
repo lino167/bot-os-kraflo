@@ -102,7 +102,7 @@ async def get_all_os_for_report(user_id: int, start_date: str = None, end_date: 
     Busca todas as OS de uma empresa, com base no usuário, com filtro de data opcional.
     """
     try:
-        user_data = await get_user_data(user_id)
+        user_data = get_user_data(user_id)
         if not user_data:
             return None
         empresa_id = user_data['empresa_id']
