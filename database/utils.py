@@ -102,9 +102,11 @@ async def get_all_os_for_report(user_id: int, start_date: str = None, end_date: 
     Busca todas as OS de uma empresa, com base no usuário, com filtro de data opcional.
     """
     try:
-        user_data = get_user_data(user_id)
+        user_data = await get_user_data(user_id)
         if not user_data:
+            logger.warning(f"Não foram encontrados dados para o usuário {user_id} ao gerar relatório.")
             return None
+            
         empresa_id = user_data['empresa_id']
         
         query = (
@@ -116,10 +118,11 @@ async def get_all_os_for_report(user_id: int, start_date: str = None, end_date: 
             query = query.gte("data_abertura", start_date)
         if end_date:
             query = query.lte("data_abertura", end_date)
+            
         response = query.order("id", desc=False).execute()
         return response.data
     except Exception as e:
-        logger.error(f"Erro ao buscar dados para relatório: {e}")
+        logger.error(f"Erro ao buscar dados para relatório da empresa do usuário {user_id}: {e}")
         return None
 
 async def get_single_os_details(os_id: int) -> dict | None:
