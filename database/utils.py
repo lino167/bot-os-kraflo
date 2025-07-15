@@ -142,25 +142,43 @@ async def get_single_os_details(os_id: int) -> dict | None:
         return None
 
 async def get_closed_os_paginated(user_id: int, page: int, page_size: int) -> list | None:
-    """
-    Busca uma 'página' de OS fechadas ou pendentes para um determinado técnico.
-    """
+    """Busca uma 'página' de OS fechadas ou pendentes NO DIA DE HOJE para um técnico."""
     try:
         offset = page * page_size
+        today_start = datetime.combine(datetime.today(), time.min).isoformat()
+        today_end = datetime.combine(datetime.today(), time.max).isoformat()
+        
         response = supabase.table('ordens_de_servico').select(
             'id, equipamento_nome, status_os, data_fechamento'
-        ).eq('tecnico_id', user_id).neq('status_os', 'Aberta').order('id', desc=True).range(offset, offset + page_size - 1).execute()
+        ).eq('tecnico_id', user_id).neq(
+            'status_os', 'Aberta'
+        ).gte( # Adicionado
+            'data_fechamento', today_start
+        ).lte( # Adicionado
+            'data_fechamento', today_end
+        ).order('id', desc=True).range(offset, offset + page_size - 1).execute()
+        
         return response.data
     except Exception as e:
         logger.error(f"Erro ao buscar OS fechadas paginada para o usuário {user_id}: {e}")
         return None
 
 async def get_closed_os_count(user_id: int) -> int:
-    """Conta o número total de OS fechadas ou pendentes para um usuário."""
+    """Conta o número total de OS fechadas ou pendentes NO DIA DE HOJE para um usuário."""
     try:
+        today_start = datetime.combine(datetime.today(), time.min).isoformat()
+        today_end = datetime.combine(datetime.today(), time.max).isoformat()
+        
         response = supabase.table('ordens_de_servico').select(
             'id', count='exact'
-        ).eq('tecnico_id', user_id).neq('status_os', 'Aberta').execute()
+        ).eq('tecnico_id', user_id).neq(
+            'status_os', 'Aberta'
+        ).gte( # Adicionado
+            'data_fechamento', today_start
+        ).lte( # Adicionado
+            'data_fechamento', today_end
+        ).execute()
+        
         return response.count
     except Exception as e:
         logger.error(f"Erro ao contar OS fechadas para o usuário {user_id}: {e}")
@@ -169,10 +187,12 @@ async def get_closed_os_count(user_id: int) -> int:
 async def get_editable_os_count(user_id: int) -> int:
     """Conta o número total de OS editáveis (status 'Aberta' ou fechadas hoje)."""
     try:
-        today_start = datetime.combine(datetime.today(), time.min).astimezone().isoformat()
-        today_end = datetime.combine(datetime.today(), time.max).astimezone().isoformat()
+        today_start = datetime.combine(datetime.today(), time.min).isoformat()
+        today_end = datetime.combine(datetime.today(), time.max).isoformat()
         
+        # Filtro OR: (status é 'Aberta') OU (status não é 'Aberta' E data_fechamento é hoje)
         filter_str = f"status_os.eq.Aberta,and(status_os.neq.Aberta,data_fechamento.gte.{today_start},data_fechamento.lte.{today_end})"
+        # ---------------------------------
         
         response = supabase.table('ordens_de_servico').select(
             'id', count='exact'
@@ -187,10 +207,12 @@ async def get_editable_os_paginated(user_id: int, page: int, page_size: int) -> 
     """Busca uma 'página' de OS editáveis (status 'Aberta' ou fechadas hoje)."""
     try:
         offset = page * page_size
-        today_start = datetime.combine(datetime.today(), time.min).astimezone().isoformat()
-        today_end = datetime.combine(datetime.today(), time.max).astimezone().isoformat()
+        today_start = datetime.combine(datetime.today(), time.min).isoformat()
+        today_end = datetime.combine(datetime.today(), time.max).isoformat()
 
+        # Filtro OR: (status é 'Aberta') OU (status não é 'Aberta' E data_fechamento é hoje)
         filter_str = f"status_os.eq.Aberta,and(status_os.neq.Aberta,data_fechamento.gte.{today_start},data_fechamento.lte.{today_end})"
+        # ---------------------------------
 
         response = supabase.table('ordens_de_servico').select(
             'id, equipamento_nome, status_os, data_abertura'

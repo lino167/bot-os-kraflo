@@ -1,6 +1,7 @@
 import pytest
 from unittest.mock import AsyncMock, MagicMock
 from telegram.ext import ConversationHandler
+from unittest.mock import AsyncMock, ANY
 
 # Importa as funções e estados da conversa que vamos testar
 from handlers import service_order
@@ -97,14 +98,14 @@ async def test_full_close_os_flow_with_parts(mocker, mock_update, mock_context):
         "diagnostico_solucao": "Correia principal substituída.",
         "status_os": "Concluída",
         "notas_finais": '',
-        "data_fechamento": "now()"
+        "data_fechamento": ANY
     }
     parts_data_esperado = [{
         "nome_peca": "Correia Dentada 50T",
         "tag_peca": "PN-12345-C",
         "quantidade": 1,
     }]
-    
+
     mock_close_os.assert_awaited_once_with(101, close_data_esperado, parts_data_esperado)
 
     # Agora a verificação do chat_id vai funcionar corretamente

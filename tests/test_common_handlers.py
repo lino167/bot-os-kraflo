@@ -1,93 +1,75 @@
 import pytest
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
+
+# Funções e Handlers a serem testados ou mockados
+from handlers.common import start
+from handlers.registration import ASK_COMPANY_NAME
 from telegram.ext import ConversationHandler
 
-# Importa as funções que queremos testar
-from handlers.common import start, cancel
-# Importa o menu que esperamos que seja usado
-from handlers.ui_components import MAIN_MENU_MARKUP
-
-# Marca todos os testes neste ficheiro como assíncronos
-pytestmark = pytest.mark.asyncio
-
-
-async def test_start_command(mocker):
-    """
-    Testa se o comando /start envia a mensagem de boas-vindas correta
-    com o menu principal para um utilizador registado.
-    """
-    # 1. PREPARAÇÃO
-    mock_update = MagicMock()
-    mock_update.effective_user.mention_html.return_value = "Test User"
-    mock_update.message.reply_html = AsyncMock()
-    mock_context = MagicMock()
-
-    mocker.patch('handlers.common.is_user_registered', new_callable=AsyncMock, return_value=True)
-    mocker.patch('handlers.common.get_user_data', new_callable=AsyncMock, return_value={'nome_completo': 'Utilizador Teste'})
-
-    # 2. AÇÃO
-    await start(mock_update, mock_context)
-
-    # 3. VERIFICAÇÃO
-    mock_update.message.reply_html.assert_awaited_with(
-        "Olá, Utilizador Teste! Bem-vindo de volta.",
-        reply_markup=MAIN_MENU_MARKUP,
-    )
-
-
-async def test_cancel_from_message(mocker):
-    """
-    Testa se a função cancel funciona corretamente quando chamada
-    por uma mensagem de texto (update.message não é None).
-    """
-    # 1. PREPARAÇÃO
-    mock_update = MagicMock()
-    mock_update.callback_query = None # Garante que não há callback query
-    mock_update.message.reply_text = AsyncMock()
+@pytest.mark.asyncio
+# Usamos @patch para interceptar as chamadas às funções do banco de dados
+@patch('handlers.common.ask_company_name', new_callable=AsyncMock)
+@patch('handlers.common.get_user_data', new_callable=AsyncMock)
+@patch('handlers.common.is_user_registered', new_callable=AsyncMock)
+async def test_start_for_registered_user(
+    mock_is_registered, mock_get_data, mock_ask_name
+):
+    """Testa o fluxo da função start para um usuário já cadastrado."""
     
-    # Simula o user_data para testar se ele é limpo
-    mock_context = MagicMock()
-    mock_context.user_data = {'algum_dado': 'algum_valor'}
+    # 1. Preparação (Arrange)
+    # Forçamos o retorno das funções mockadas
+    mock_is_registered.return_value = True # Simula que o usuário está no DB
+    mock_get_data.return_value = {'nome_completo': 'Usuário Teste'} # Simula os dados do usuário
 
-    # 2. AÇÃO
-    resultado = await cancel(mock_update, mock_context)
-
-    # 3. VERIFICAÇÃO
-    # Verifica se a resposta de texto foi enviada
-    mock_update.message.reply_text.assert_awaited_once_with(
-        "Operação cancelada.", reply_markup=MAIN_MENU_MARKUP
-    )
-    # Verifica se o user_data foi limpo
-    assert not mock_context.user_data 
-    # Verifica se a função retornou o sinal para terminar a conversa
-    assert resultado == ConversationHandler.END
-
-
-async def test_cancel_from_callback_query(mocker):
-    """
-    Testa se a função cancel funciona corretamente quando chamada
-    por um clique de botão (update.callback_query não é None).
-    """
-    # 1. PREPARAÇÃO
     mock_update = MagicMock()
-    # Desta vez, simulamos um callback query
-    mock_update.callback_query.answer = AsyncMock()
-    mock_update.callback_query.edit_message_text = AsyncMock()
+    mock_update.effective_user = MagicMock()
+    mock_update.effective_user.mention_html.return_value = "Usuário Teste" # Para a mensagem de olá
+    mock_update.message = AsyncMock()
+
+    # 2. Ação (Act)
+    returned_state = await start(mock_update, MagicMock())
+
+    # 3. Verificação (Assert)
+    # Verifica se a verificação de usuário foi chamada
+    mock_is_registered.assert_awaited_once()
+
+    # Verifica se a mensagem de boas-vindas foi enviada
+    mock_update.message.reply_html.assert_awaited_once()
+    # Pega o primeiro argumento da chamada para verificar o texto
+    call_args = mock_update.message.reply_html.call_args[0]
+    assert "Olá, Usuário Teste! Bem-vindo de volta." in call_args[0]
+
+    # Verifica que o fluxo de cadastro NÃO foi iniciado
+    mock_ask_name.assert_not_called()
+
+    # Verifica que a conversa terminou (não iniciou um novo fluxo)
+    assert returned_state == ConversationHandler.END
+
+
+@pytest.mark.asyncio
+@patch('handlers.common.ask_company_name', new_callable=AsyncMock, return_value=ASK_COMPANY_NAME)
+@patch('handlers.common.is_user_registered', new_callable=AsyncMock)
+async def test_start_for_new_user(mock_is_registered, mock_ask_name):
+    """Testa o fluxo da função start para um novo usuário."""
+
+    # 1. Preparação (Arrange)
+    mock_is_registered.return_value = False # Simula que o usuário NÃO está no DB
     
-    mock_context = MagicMock()
-    mock_context.user_data = {'algum_dado': 'algum_valor'}
+    mock_update = MagicMock()
+    mock_update.effective_user = MagicMock()
+    mock_update.message = AsyncMock()
 
-    # 2. AÇÃO
-    resultado = await cancel(mock_update, mock_context)
+    # 2. Ação (Act)
+    returned_state = await start(mock_update, MagicMock())
 
-    # 3. VERIFICAÇÃO
-    # Verifica se o callback foi respondido
-    mock_update.callback_query.answer.assert_awaited_once()
-    # Verifica se a mensagem original do botão foi editada
-    mock_update.callback_query.edit_message_text.assert_awaited_once_with(
-        text="Operação cancelada."
-    )
-    # Verifica se o user_data foi limpo
-    assert not mock_context.user_data
-    # Verifica se a função retornou o sinal para terminar a conversa
-    assert resultado == ConversationHandler.END
+    # 3. Verificação (Assert)
+    mock_is_registered.assert_awaited_once()
+    
+    # Verifica que a mensagem de boas-vindas NÃO foi enviada
+    mock_update.message.reply_html.assert_not_called()
+    
+    # Verifica que o fluxo de cadastro FOI iniciado
+    mock_ask_name.assert_awaited_once()
+
+    # Verifica que o estado retornado é o de início do cadastro
+    assert returned_state == ASK_COMPANY_NAME

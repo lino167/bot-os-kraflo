@@ -6,19 +6,24 @@ from telegram.ext import (
 )
 
 from config import TELEGRAM_TOKEN
-from handlers import common, registration, service_order, reports, os_edit # Importa o novo módulo
+from handlers import common, registration, service_order, reports, os_edit
 from database.utils import is_user_registered
 
 # Configuração do logging
 logging.basicConfig(
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", 
+    level=logging.INFO,
+    handlers=[
+        logging.FileHandler("bot_debug.log"),
+        logging.StreamHandler() 
+    ]
 )
+# Define um logger específico para este módulo
 logger = logging.getLogger(__name__)
 
 
 # =============================================================================
 # FUNÇÃO DE GUARDA (HELPER)
-# Definida aqui, no topo, para estar disponível para todos os handlers.
 # =============================================================================
 async def check_registration_and_start(update: Update, context: ContextTypes.DEFAULT_TYPE, start_function):
     """
@@ -27,18 +32,16 @@ async def check_registration_and_start(update: Update, context: ContextTypes.DEF
     """
     user = update.effective_user
     if not user:
-        logger.warning("Não foi possível identificar o usuário na mensagem.")
+        logger.warning("Não foi possível identificar o usuário na mensagem. A ação foi cancelada.")
         return ConversationHandler.END
 
-    logger.info(f"User {user.id} a tentar aceder à função protegida: {start_function.__name__}")
+    logger.info(f"[GUARD] Usuário {user.id} ({user.full_name}) tentando aceder à função '{start_function.__name__}'.")
     
     if await is_user_registered(user.id):
-        logger.info(f"User {user.id} está registado. A prosseguir com a ação.")
-        # Passa o objeto 'update' original para que a próxima função tenha o contexto completo
+        logger.info(f"[GUARD] Acesso PERMITIDO para o usuário {user.id}. A iniciar '{start_function.__name__}'.")
         return await start_function(update, context)
     else:
-        logger.warning(f"User {user.id} não está registado. Acesso negado. A instruí-lo para se registar.")
-        # Usa o update.message para garantir que podemos sempre enviar uma resposta de texto.
+        logger.warning(f"[GUARD] Acesso NEGADO para o usuário {user.id}. O usuário não está registado.")
         await update.message.reply_text("Você precisa de se registar primeiro. Use o comando /start para começar.")
         return ConversationHandler.END
 
@@ -48,13 +51,16 @@ async def check_registration_and_start(update: Update, context: ContextTypes.DEF
 # =============================================================================
 def main() -> None:
     """Inicia o bot e configura todos os handlers."""
-    logger.info("A iniciar a configuração do bot...")
+    logger.info("="*30)
+    logger.info("INICIANDO A CONFIGURAÇÃO DO BOT")
+    logger.info("="*30)
     application = Application.builder().token(TELEGRAM_TOKEN).build()
 
     # --- DEFINIÇÃO DOS HANDLERS DE CONVERSA ---
-    logger.info("A configurar os handlers de conversa...")
+    logger.info("Configurando os ConversationHandlers...")
 
     # 1. Handler de Cadastro e Menu Principal (Gatilho: /start)
+    logger.info("--> Configurando handler: registration_conv")
     registration_conv = ConversationHandler(
         entry_points=[CommandHandler("start", common.start)],
         states={
@@ -73,6 +79,7 @@ def main() -> None:
     )
 
     # 2. Handler de Abertura de OS (Gatilho: botão do menu)
+    logger.info("--> Configurando handler: open_os_conv")
     open_os_conv = ConversationHandler(
         entry_points=[MessageHandler(filters.Regex("^🆕 Abrir OS$"), lambda u, c: check_registration_and_start(u, c, service_order.start_open_os))],
         states={
@@ -94,6 +101,7 @@ def main() -> None:
     )
     
     # 3. Handler de Fechamento de OS
+    logger.info("--> Configurando handler: close_os_conv")
     close_os_conv = ConversationHandler(
         entry_points=[MessageHandler(filters.Regex("^✅ Fechar OS$"), lambda u, c: check_registration_and_start(u, c, service_order.start_close_os))],
         states={
@@ -113,6 +121,7 @@ def main() -> None:
     )
 
     # 4. Handler de Relatórios
+    logger.info("--> Configurando handler: report_conv")
     report_conv = ConversationHandler(
         entry_points=[MessageHandler(filters.Regex("^📊 Relatórios$"), lambda u, c: check_registration_and_start(u, c, reports.start_report_generation))],
         states={
@@ -126,6 +135,7 @@ def main() -> None:
     )
 
     # 5. Handler de Listagem de OS Abertas
+    logger.info("--> Configurando handler: list_open_os_conv")
     list_open_os_conv = ConversationHandler(
         entry_points=[MessageHandler(filters.Regex("^📋 Listar Abertas$"), lambda u, c: check_registration_and_start(u, c, service_order.start_list_open_os))],
         states={
@@ -136,6 +146,7 @@ def main() -> None:
     )
 
     # 6. Handler de Listagem de OS Fechadas
+    logger.info("--> Configurando handler: list_closed_os_conv")
     list_closed_os_conv = ConversationHandler(
         entry_points=[MessageHandler(filters.Regex("^🗂️ Listar Fechadas$"), lambda u, c: check_registration_and_start(u, c, service_order.start_list_closed_os))],
         states={
@@ -146,6 +157,7 @@ def main() -> None:
     )
 
     # 7. Handler de Edição de OS
+    logger.info("--> Configurando handler: edit_os_conv")
     edit_os_conv = ConversationHandler(
         entry_points=[MessageHandler(filters.Regex("^✏️ Editar OS$"), lambda u, c: check_registration_and_start(u, c, os_edit.start_edit_os))],
         states={
@@ -165,12 +177,9 @@ def main() -> None:
     )
     
     # --- REGISTO DE TODOS OS HANDLERS NA APLICAÇÃO ---
-    logger.info("A adicionar handlers à aplicação...")
+    logger.info("Adicionando todos os handlers à aplicação...")
     
-    # O handler de cadastro é o mais importante e deve vir primeiro para lidar com o /start
     application.add_handler(registration_conv)
-    
-    # Adicionamos os outros handlers de conversa
     application.add_handler(open_os_conv)
     application.add_handler(close_os_conv)
     application.add_handler(report_conv)
@@ -178,15 +187,18 @@ def main() -> None:
     application.add_handler(list_closed_os_conv)
     application.add_handler(edit_os_conv)
     
-    logger.info("Todos os handlers foram adicionados.")
+    logger.info("Todos os handlers foram adicionados com sucesso.")
     
-    # Mensagem de sucesso no console
+    success_message = "🚀 BOT INICIADO COM SUCESSO! 🚀"
+    logger.info("="*50)
+    logger.info(success_message)
+    logger.info("="*50)
     print("="*50)
-    print("🚀 BOT INICIADO COM SUCESSO! 🚀")
+    print(success_message)
     print("="*50)
     
     # Inicia o bot
-    logger.info("Bot pronto e a iniciar o polling.")
+    logger.info("Bot pronto. A iniciar o polling de atualizações...")
     application.run_polling()
 
 

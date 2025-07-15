@@ -4,6 +4,7 @@ import pandas as pd
 from datetime import datetime
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes, ConversationHandler, filters
+from datetime import datetime
 
 from config import supabase
 from handlers.common import cancel, MAIN_MENU_MARKUP
@@ -105,7 +106,12 @@ async def save_os_and_finish(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await context.bot.send_message(chat_id=user_id, text="Erro: não foi possível encontrar seus dados de cadastro.")
         return ConversationHandler.END
     os_data = context.user_data.get('os_data', {})
-    os_data.update({"status_os": "Aberta", "tecnico_id": user_id, "empresa_id": user_db_data['empresa_id']})
+    os_data.update({
+        "status_os": "Aberta", 
+        "tecnico_id": user_id, 
+        "empresa_id": user_db_data['empresa_id'],
+        "data_abertura": datetime.now().isoformat() 
+    })
     new_os = await save_new_os(os_data)
     if new_os:
         await context.bot.send_message(chat_id=user_id, text=f"✅ Ordem de Serviço #{new_os['id']} aberta com sucesso!", reply_markup=MAIN_MENU_MARKUP)
@@ -198,7 +204,12 @@ async def finalize_without_notes(update: Update, context: ContextTypes.DEFAULT_T
     return await _save_and_end_closing_conversation(update, context)
 async def _save_and_end_closing_conversation(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     os_id = context.user_data['os_id_to_close']
-    close_data = {"diagnostico_solucao": context.user_data.get('close_solution', 'N/A'), "status_os": context.user_data.get('final_status', 'Fechada'), "notas_finais": context.user_data.get('final_notes', ''), "data_fechamento": "now()"}
+    close_data = {
+        "diagnostico_solucao": context.user_data.get('close_solution', 'N/A'), 
+        "status_os": context.user_data.get('final_status', 'Fechada'), 
+        "notas_finais": context.user_data.get('final_notes', ''), 
+        "data_fechamento": datetime.now().isoformat() # Alteração principal
+    }
     parts_data = context.user_data.get('parts_list', [])
     success = await close_os_in_db(os_id, close_data, parts_data)
     chat_id = update.effective_chat.id

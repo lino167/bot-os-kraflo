@@ -1,10 +1,12 @@
 import logging
 import os
+import pytz
 import pandas as pd
 from fpdf import FPDF
 from datetime import date, timedelta, datetime
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes, ConversationHandler
+from datetime import date, timedelta, datetime, time
 
 from database.utils import get_all_os_for_report, get_single_os_details
 from handlers.common import cancel
@@ -82,12 +84,16 @@ async def handle_filter_choice(update: Update, context: ContextTypes.DEFAULT_TYP
     filter_type = query.data
     if filter_type == "report_today":
         today = date.today()
-        start_date, end_date = today.strftime("%Y-%m-%d 00:00:00"), today.strftime("%Y-%m-%d 23:59:59")
+        start_dt = datetime.combine(today, time.min)
+        end_dt = datetime.combine(today, time.max)
+        start_date, end_date = start_dt.isoformat(), end_dt.isoformat()
         context.user_data['filter_title'] = f"do dia {today.strftime('%d/%m/%Y')}"
         return await fetch_and_list_os(update, context, start_date, end_date)
     elif filter_type == "report_yesterday":
         yesterday = date.today() - timedelta(days=1)
-        start_date, end_date = yesterday.strftime("%Y-%m-%d 00:00:00"), yesterday.strftime("%Y-%m-%d 23:59:59")
+        start_dt = datetime.combine(yesterday, time.min)
+        end_dt = datetime.combine(yesterday, time.max)
+        start_date, end_date = start_dt.isoformat(), end_dt.isoformat()
         context.user_data['filter_title'] = f"do dia {yesterday.strftime('%d/%m/%Y')}"
         return await fetch_and_list_os(update, context, start_date, end_date)
     elif filter_type == "report_all":
@@ -280,7 +286,7 @@ async def generate_csv_report(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 def _create_detailed_pdf_page(pdf: PDF, data: dict):
     """
-    Adiciona uma página ao PDF com os detalhes de uma OS, incluindo o código do técnico.
+    Adiciona uma página ao PDF com os detalhes de uma OS...
     """
     pdf.add_page()
     pdf.set_font('Arial', '', 11)
@@ -291,8 +297,21 @@ def _create_detailed_pdf_page(pdf: PDF, data: dict):
 
     def format_date(date_str):
         if not date_str: return "Não preenchido"
-        try: return pd.to_datetime(date_str).strftime('%d/%m/%Y às %H:%M')
-        except (ValueError, TypeError): return str(date_str)
+        try:
+            # Define o fuso horário local desejado
+            local_tz = pytz.timezone("America/Sao_Paulo") 
+            
+            # Converte a string do DB (que está em UTC) para um objeto datetime ciente do fuso
+            utc_date = pd.to_datetime(date_str).tz_localize('UTC')
+            
+            # Converte do fuso UTC para o fuso local
+            local_date = utc_date.tz_convert(local_tz)
+            
+            # Formata a data/hora local para exibição
+            return local_date.strftime('%d/%m/%Y às %H:%M')
+        
+        except (ValueError, TypeError): 
+            return str(date_str)
 
     # --- Seção 1: Detalhes do Profissional (ATUALIZADA) ---
     pdf.set_font('Arial', 'B', 12)

@@ -1,6 +1,7 @@
 import pytest
 from unittest.mock import AsyncMock, MagicMock
 from telegram.ext import ConversationHandler
+from unittest.mock import AsyncMock, ANY 
 
 # Importa as funções e estados da conversa que vamos testar
 from handlers import service_order
@@ -102,7 +103,8 @@ async def test_full_open_os_flow_no_photo(mocker, mock_update, mock_context):
         'descricao_problema': 'Máquina parada, não liga.',
         'status_os': 'Aberta',
         'tecnico_id': 123456,
-        'empresa_id': 'uuid-da-empresa'
+        'empresa_id': 'uuid-da-empresa',
+        'data_abertura': ANY 
     }
     mock_save_new_os.assert_awaited_once_with(dados_esperados)
 
