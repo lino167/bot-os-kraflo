@@ -239,19 +239,23 @@ async def generate_csv_report(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     file_path = ""
     try:
+        ## 1. PREPARAÇÃO DOS DADOS BRUTOS
         all_os_list = context.user_data.get('all_os_list', [])
         report_data = [item for item in all_os_list if item['id'] in selected_ids]
 
         processed_data = []
         for service_order in report_data:
             os_copy = service_order.copy()
-            tecnico_info = os_copy.pop('tecnicos', {}) or {} # Garante um dict vazio se for None
+            # Extrai os dados do técnico de forma segura
+            tecnico_info = os_copy.pop('tecnicos', {}) or {} 
             os_copy['tecnico_nome'] = tecnico_info.get('nome_completo', 'N/A')
-            os_copy['tecnico_codigo'] = tecnico_info.get('codigo_empresa', '') # Pega o código
+            os_copy['tecnico_codigo'] = tecnico_info.get('codigo_empresa', '')
             processed_data.append(os_copy)
 
+        ## 2. CRIAÇÃO E MANIPULAÇÃO DO DATAFRAME
         df = pd.DataFrame(processed_data)
         
+        # Renomeia as colunas para nomes mais amigáveis
         df.rename(columns={
             'id': 'OS', 'equipamento_nome': 'Equipamento', 'equipamento_tag': 'TAG', 
             'tipo_manutencao': 'Tipo', 'prioridade': 'Prioridade', 'status_os': 'Status', 
@@ -261,19 +265,29 @@ async def generate_csv_report(update: Update, context: ContextTypes.DEFAULT_TYPE
             'url_foto': 'Link Foto'
         }, inplace=True)
         
+        # Formata as colunas de data para o fuso horário local
+        local_tz = pytz.timezone("America/Sao_Paulo")
+        for col in ['Abertura', 'Fechamento']:
+            if col in df.columns and not df[col].isnull().all():
+                df[col] = pd.to_datetime(df[col]).dt.tz_convert(local_tz).dt.strftime('%d/%m/%Y %H:%M')
+
+        ## 3. FINALIZAÇÃO E ENVIO DO ARQUIVO
         colunas_finais = [
             'OS', 'Status', 'Prioridade', 'Tipo', 'Equipamento', 'TAG', 'Técnico', 'Código Técnico',
             'Abertura', 'Fechamento', 'Problema', 'Solução', 'Notas', 'Link Foto'
         ]
-        # Filtra apenas as colunas que existem no DataFrame para evitar erros
+        
+        # Garante que apenas as colunas existentes sejam usadas, na ordem correta
         colunas_existentes = [col for col in colunas_finais if col in df.columns]
         df_final = df[colunas_existentes]
 
+        # Salva e envia o arquivo
         file_path = f"relatorio_selecao_{user_id}_{datetime.now().strftime('%Y%m%d')}.csv"
         df_final.to_csv(file_path, index=False, sep=';', encoding='utf-8-sig')
 
         with open(file_path, "rb") as document:
             await context.bot.send_document(chat_id=user_id, document=document)
+            
     except Exception as e:
         logger.error(f"Erro ao gerar relatório CSV para o usuário {user_id}: {e}")
         await context.bot.send_message(chat_id=user_id, text="Ocorreu um erro ao gerar seu relatório CSV.")
@@ -298,16 +312,17 @@ def _create_detailed_pdf_page(pdf: PDF, data: dict):
     def format_date(date_str):
         if not date_str: return "Não preenchido"
         try:
-            # Define o fuso horário local desejado
-            local_tz = pytz.timezone("America/Sao_Paulo") 
+            # 1. Define o fuso horário local
+            local_tz = pytz.timezone("America/Sao_Paulo")
             
-            # Converte a string do DB (que está em UTC) para um objeto datetime ciente do fuso
-            utc_date = pd.to_datetime(date_str).tz_localize('UTC')
+            # 2. Converte a string do banco para um objeto datetime.
+            #    O pandas já entende que a string está em UTC.
+            utc_date = pd.to_datetime(date_str)
             
-            # Converte do fuso UTC para o fuso local
+            # 3. Converte o tempo de UTC para o fuso local
             local_date = utc_date.tz_convert(local_tz)
             
-            # Formata a data/hora local para exibição
+            # 4. Formata para a string amigável
             return local_date.strftime('%d/%m/%Y às %H:%M')
         
         except (ValueError, TypeError): 
