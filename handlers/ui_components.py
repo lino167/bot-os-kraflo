@@ -5,10 +5,9 @@ REPLY_KEYBOARD = [
     ["🆕 Abrir OS", "✅ Fechar OS"],
     ["📋 Listar Abertas", "🗂️ Listar Fechadas"],
     ["📊 Relatórios", "✏️ Editar OS"],
+    ["🗑️ Deletar OS", "⚙️ Consultar Peças"], # <<< NOVOS BOTÕES
 ]
 MAIN_MENU_MARKUP = ReplyKeyboardMarkup(REPLY_KEYBOARD, resize_keyboard=True)
-
-# --- Teclados de Botões Inline (para edição e outras conversas) ---
 
 # Teclado para selecionar o Tipo de Manutenção
 TIPO_MANUTENCAO_KEYBOARD = [

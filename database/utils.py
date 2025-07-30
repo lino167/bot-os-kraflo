@@ -60,29 +60,6 @@ async def get_open_os_count(user_id: int) -> int:
         logger.error(f"Erro ao contar OS abertas para o usuário {user_id}: {e}")
         return 0
 
-async def get_closed_os_paginated(user_id: int, page: int, page_size: int) -> list | None:
-    """Busca uma 'página' de OS fechadas ou pendentes para um determinado técnico."""
-    try:
-        offset = page * page_size
-        response = supabase.table('ordens_de_servico').select(
-            'id, equipamento_nome, status_os, data_fechamento'
-        ).eq('tecnico_id', user_id).neq('status_os', 'Aberta').order('id', desc=True).range(offset, offset + page_size - 1).execute()
-        return response.data
-    except Exception as e:
-        logger.error(f"Erro ao buscar OS fechadas paginada para o usuário {user_id}: {e}")
-        return None
-
-async def get_closed_os_count(user_id: int) -> int:
-    """Conta o número total de OS fechadas ou pendentes para um usuário."""
-    try:
-        response = supabase.table('ordens_de_servico').select(
-            'id', count='exact'
-        ).eq('tecnico_id', user_id).neq('status_os', 'Aberta').execute()
-        return response.count
-    except Exception as e:
-        logger.error(f"Erro ao contar OS fechadas para o usuário {user_id}: {e}")
-        return 0
-
 async def close_os_in_db(os_id: int, close_data: dict, parts_data: list) -> bool:
     try:
         supabase.table('ordens_de_servico').update(close_data).eq('id', os_id).execute()
@@ -128,7 +105,6 @@ async def get_all_os_for_report(user_id: int, start_date: str = None, end_date: 
 async def get_single_os_details(os_id: int) -> dict | None:
     """Busca todos os detalhes de uma única OS."""
     try:
-        # ALTERAÇÃO AQUI: adicionamos 'codigo_empresa' na seleção do técnico
         response = (
             supabase.table("ordens_de_servico")
             .select("*, tecnico:tecnicos(nome_completo, funcao, codigo_empresa), pecas:pecas_utilizadas(*)")
@@ -152,11 +128,7 @@ async def get_closed_os_paginated(user_id: int, page: int, page_size: int) -> li
             'id, equipamento_nome, status_os, data_fechamento'
         ).eq('tecnico_id', user_id).neq(
             'status_os', 'Aberta'
-        ).gte( # Adicionado
-            'data_fechamento', today_start
-        ).lte( # Adicionado
-            'data_fechamento', today_end
-        ).order('id', desc=True).range(offset, offset + page_size - 1).execute()
+        ).gte('data_fechamento', today_start).lte('data_fechamento', today_end).order('id', desc=True).range(offset, offset + page_size - 1).execute()
         
         return response.data
     except Exception as e:
@@ -173,11 +145,7 @@ async def get_closed_os_count(user_id: int) -> int:
             'id', count='exact'
         ).eq('tecnico_id', user_id).neq(
             'status_os', 'Aberta'
-        ).gte( # Adicionado
-            'data_fechamento', today_start
-        ).lte( # Adicionado
-            'data_fechamento', today_end
-        ).execute()
+        ).gte('data_fechamento', today_start).lte('data_fechamento', today_end).execute()
         
         return response.count
     except Exception as e:
@@ -190,9 +158,7 @@ async def get_editable_os_count(user_id: int) -> int:
         today_start = datetime.combine(datetime.today(), time.min).isoformat()
         today_end = datetime.combine(datetime.today(), time.max).isoformat()
         
-        # Filtro OR: (status é 'Aberta') OU (status não é 'Aberta' E data_fechamento é hoje)
         filter_str = f"status_os.eq.Aberta,and(status_os.neq.Aberta,data_fechamento.gte.{today_start},data_fechamento.lte.{today_end})"
-        # ---------------------------------
         
         response = supabase.table('ordens_de_servico').select(
             'id', count='exact'
@@ -210,9 +176,7 @@ async def get_editable_os_paginated(user_id: int, page: int, page_size: int) -> 
         today_start = datetime.combine(datetime.today(), time.min).isoformat()
         today_end = datetime.combine(datetime.today(), time.max).isoformat()
 
-        # Filtro OR: (status é 'Aberta') OU (status não é 'Aberta' E data_fechamento é hoje)
         filter_str = f"status_os.eq.Aberta,and(status_os.neq.Aberta,data_fechamento.gte.{today_start},data_fechamento.lte.{today_end})"
-        # ---------------------------------
 
         response = supabase.table('ordens_de_servico').select(
             'id, equipamento_nome, status_os, data_abertura'
@@ -234,3 +198,32 @@ async def update_os_field(os_id: int, field_name: str, new_value: any) -> bool:
     except Exception as e:
         logger.error(f"Erro ao atualizar campo da OS #{os_id}: {e}")
         return False
+
+async def delete_os_by_id(os_id: int) -> bool:
+    """Deleta uma Ordem de Serviço pelo seu ID, incluindo peças associadas."""
+    try:
+        # Primeiro, deleta as peças associadas para evitar erro de chave estrangeira
+        supabase.table('pecas_utilizadas').delete().eq('ordem_id', os_id).execute()
+        # Depois, deleta a OS
+        supabase.table('ordens_de_servico').delete().eq('id', os_id).execute()
+        logger.info(f"OS #{os_id} e suas peças associadas foram deletadas com sucesso.")
+        return True
+    except Exception as e:
+        logger.error(f"Erro ao deletar a OS #{os_id}: {e}")
+        return False
+
+async def get_unique_parts_history(user_id: int, search_term: str) -> list | None:
+    """Busca um histórico de peças únicas utilizadas pela empresa do usuário."""
+    try:
+        user_data = await get_user_data(user_id)
+        if not user_data: return None
+        
+        response = supabase.rpc('get_parts_history_by_company', {
+            'id_empresa': user_data['empresa_id'],
+            'search_query': search_term
+        }).execute()
+        
+        return response.data
+    except Exception as e:
+        logger.error(f"Erro ao buscar histórico de peças: {e}")
+        return None

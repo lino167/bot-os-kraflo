@@ -4,7 +4,6 @@ import pandas as pd
 from datetime import datetime
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes, ConversationHandler, filters
-from datetime import datetime
 
 from config import supabase
 from handlers.common import cancel, MAIN_MENU_MARKUP
@@ -16,14 +15,19 @@ from database.utils import (
 logger = logging.getLogger(__name__)
 
 # --- Definição dos Estados da Conversa ---
+# Abertura
 (ASK_EQUIPMENT, ASK_TAG, ASK_LOCATION, ASK_MAINT_TYPE, 
  ASK_PRIORITY, ASK_PROBLEM_DESC, CONFIRM_SAVE, 
  ASK_IF_PHOTO, GET_PHOTO) = range(7, 16)
+# Fechamento (com novos estados)
 (SELECT_OS_TO_CLOSE, ASK_SOLUTION, ASK_IF_PARTS, ASK_PART_NAME, 
  ASK_PART_TAG, ASK_PART_QTY, ASK_MORE_PARTS, ASK_FINAL_STATUS, 
- ASK_IF_NOTES, GET_FINAL_NOTES) = range(16, 26)
+ ASK_IF_ATTACHMENT, GET_ATTACHMENT, ASK_IF_NOTES, GET_FINAL_NOTES) = range(16, 28)
+# Paginação
 PAGINATING_OS, PAGINATING_CLOSED_OS = range(28, 30)
 OS_PER_PAGE = 5
+
+# --- FLUXO DE ABERTURA DE OS ---
 
 async def start_open_os(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     keyboard = [[InlineKeyboardButton("Sim, começar", callback_data="start_os")], [InlineKeyboardButton("Não, voltar", callback_data="cancel_os")]]
@@ -86,9 +90,9 @@ async def get_photo_and_save(update: Update, context: ContextTypes.DEFAULT_TYPE)
         photo_bytearray = await photo_file.download_as_bytearray()
         photo_bytes_for_upload = bytes(photo_bytearray)
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        file_path = f"{user.id}/{timestamp}.jpg"
-        supabase.storage.from_("fotos-os").upload(file=photo_bytes_for_upload, path=file_path, file_options={"content-type": "image/jpeg"})
-        public_url = supabase.storage.from_("fotos-os").get_public_url(file_path)
+        file_path = f"{user.id}/abertura_{timestamp}.jpg"
+        supabase.storage.from_("anexos-os").upload(file=photo_bytes_for_upload, path=file_path, file_options={"content-type": "image/jpeg"})
+        public_url = supabase.storage.from_("anexos-os").get_public_url(file_path)
         context.user_data['os_data']['url_foto'] = public_url
         logger.info(f"Foto enviada por {user.id} salva em: {public_url}")
     except Exception as e:
@@ -113,12 +117,15 @@ async def save_os_and_finish(update: Update, context: ContextTypes.DEFAULT_TYPE)
         "data_abertura": datetime.now().isoformat() 
     })
     new_os = await save_new_os(os_data)
-    if new_os:
+    if new_os and 'id' in new_os:
         await context.bot.send_message(chat_id=user_id, text=f"✅ Ordem de Serviço #{new_os['id']} aberta com sucesso!", reply_markup=MAIN_MENU_MARKUP)
     else:
         await context.bot.send_message(chat_id=user_id, text="❌ Ocorreu um erro ao salvar a Ordem de Serviço.", reply_markup=MAIN_MENU_MARKUP)
     context.user_data.clear()
     return ConversationHandler.END
+
+# --- FLUXO DE FECHAMENTO DE OS ---
+
 async def start_close_os(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     user_id = update.effective_user.id
     open_os_list = await get_open_os_paginated(user_id, 0, 50) 
@@ -180,19 +187,52 @@ async def ask_for_final_status(update: Update, context: ContextTypes.DEFAULT_TYP
     reply_markup = InlineKeyboardMarkup(keyboard)
     await query.edit_message_text(text="Entendido. Qual o status final desta Ordem de Serviço?", reply_markup=reply_markup)
     return ASK_FINAL_STATUS
-async def get_final_status_and_ask_if_notes(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+async def get_final_status_and_ask_if_attachment(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query
     await query.answer()
     context.user_data['final_status'] = query.data
-    keyboard = [[InlineKeyboardButton("✍️ Sim, adicionar", callback_data="notes_yes")], [InlineKeyboardButton("👍 Não, finalizar", callback_data="notes_no")]]
+    keyboard = [[InlineKeyboardButton("📎 Sim, anexar", callback_data="attach_yes")], [InlineKeyboardButton("👍 Não, pular", callback_data="attach_no")]]
     reply_markup = InlineKeyboardMarkup(keyboard)
-    await query.edit_message_text(text=f"Status definido como '{query.data}'.\n\nDeseja adicionar notas finais?", reply_markup=reply_markup)
-    return ASK_IF_NOTES
-async def prompt_for_final_notes(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    await query.edit_message_text(text=f"Status definido como '{query.data}'.\n\nDeseja anexar um arquivo (foto, PDF) ao fechamento?", reply_markup=reply_markup)
+    return ASK_IF_ATTACHMENT
+async def prompt_for_attachment(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query
     await query.answer()
-    await query.edit_message_text(text="Ok. Por favor, adicione as notas finais, observações ou recomendações.")
-    return GET_FINAL_NOTES
+    if query.data == 'attach_yes':
+        await query.edit_message_text("Ok, por favor, envie o anexo agora.")
+        return GET_ATTACHMENT
+    else:
+        return await prompt_for_final_notes(update, context, from_button=True)
+async def get_attachment_and_ask_notes(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    user = update.effective_user
+    attachment = update.message.document or update.message.photo[-1]
+    file = await attachment.get_file()
+    await update.message.reply_text("Recebi o anexo. Fazendo upload, aguarde...")
+    try:
+        file_bytearray = await file.download_as_bytearray()
+        file_bytes_for_upload = bytes(file_bytearray)
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        original_filename = attachment.file_name if hasattr(attachment, 'file_name') else f"{timestamp}.jpg"
+        file_path = f"{user.id}/fechamento_{timestamp}_{original_filename}"
+        supabase.storage.from_("anexos-os").upload(file=file_bytes_for_upload, path=file_path)
+        public_url = supabase.storage.from_("anexos-os").get_public_url(file_path)
+        context.user_data.setdefault('close_data', {})['url_arquivo_fechamento'] = public_url
+        logger.info(f"Anexo de fechamento enviado por {user.id} salvo em: {public_url}")
+    except Exception as e:
+        logger.error(f"Erro no upload do anexo de fechamento: {e}")
+        await update.message.reply_text("Desculpe, ocorreu um erro ao salvar seu anexo.")
+    return await prompt_for_final_notes(update, context)
+async def prompt_for_final_notes(update: Update, context: ContextTypes.DEFAULT_TYPE, from_button: bool = False) -> int:
+    keyboard = [[InlineKeyboardButton("👍 Não, finalizar", callback_data="notes_no")]]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    message_text = "Deseja adicionar notas finais, observações ou recomendações?"
+    if from_button:
+        query = update.callback_query
+        await query.answer()
+        await query.edit_message_text(text=message_text, reply_markup=reply_markup)
+    else:
+        await update.message.reply_text(text=message_text, reply_markup=reply_markup)
+    return ASK_IF_NOTES
 async def get_final_notes_and_save(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     context.user_data['final_notes'] = update.message.text
     return await _save_and_end_closing_conversation(update, context)
@@ -204,52 +244,46 @@ async def finalize_without_notes(update: Update, context: ContextTypes.DEFAULT_T
     return await _save_and_end_closing_conversation(update, context)
 async def _save_and_end_closing_conversation(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     os_id = context.user_data['os_id_to_close']
-    close_data = {
+    close_data = context.user_data.get('close_data', {})
+    close_data.update({
         "diagnostico_solucao": context.user_data.get('close_solution', 'N/A'), 
         "status_os": context.user_data.get('final_status', 'Fechada'), 
         "notas_finais": context.user_data.get('final_notes', ''), 
-        "data_fechamento": datetime.now().isoformat() # Alteração principal
-    }
+        "data_fechamento": datetime.now().isoformat()
+    })
     parts_data = context.user_data.get('parts_list', [])
     success = await close_os_in_db(os_id, close_data, parts_data)
     chat_id = update.effective_chat.id
     if success:
         await context.bot.send_message(chat_id=chat_id, text=f"✅ Ordem de Serviço #{os_id} fechada com sucesso!", reply_markup=MAIN_MENU_MARKUP)
     else:
-        await context.bot.send_message(chat_id=chat_id, text="❌ Ocorreu um erro ao fechar a OS.", reply_markup=MAIN_MENU_MARKUP)
+        await context.bot.send_message(chat_id=chat_id, text=f"❌ Ocorreu um erro ao fechar a OS #{os_id}.", reply_markup=MAIN_MENU_MARKUP)
     context.user_data.clear()
     return ConversationHandler.END
 
 # --- FLUXO DE LISTAGEM PAGINADA DE OS ---
-
 async def display_os_page(update: Update, context: ContextTypes.DEFAULT_TYPE, list_type: str):
-    """Exibe uma página de OS (abertas ou fechadas) com botões de navegação."""
     user_id = update.effective_user.id
     is_open_list = list_type == "open"
-    
     page_key = 'current_page' if is_open_list else 'current_closed_page'
     total_key = 'total_os' if is_open_list else 'total_closed_os'
-    
     current_page = context.user_data.get(page_key, 0)
     total_os = context.user_data.get(total_key, 0)
     total_pages = math.ceil(total_os / OS_PER_PAGE)
-
     if is_open_list:
         os_list = await get_open_os_paginated(user_id, page=current_page, page_size=OS_PER_PAGE)
         message = f"📋 **Suas Ordens de Serviço Abertas (Página {current_page + 1} de {total_pages}):**\n\n"
         if os_list:
             for os in os_list:
                 message += (f"🔹 **OS #{os['id']}**\n   - **Equipamento:** {os['equipamento_nome']} ({os['equipamento_tag']})\n   - **Tipo:** {os['tipo_manutencao']}\n   - **Prioridade:** {os['prioridade']}\n--------------------\n")
-    else: # closed list
+    else:
         os_list = await get_closed_os_paginated(user_id, page=current_page, page_size=OS_PER_PAGE)
         message = f"🗂️ **Seu Histórico de OS (Página {current_page + 1} de {total_pages}):**\n\n"
         if os_list:
             for os in os_list:
                 data_fechamento_str = pd.to_datetime(os['data_fechamento']).strftime('%d/%m/%Y') if os.get('data_fechamento') else "N/A"
                 message += (f"🔹 **OS #{os['id']}**\n   - **Equipamento:** {os['equipamento_nome']}\n   - **Status:** {os['status_os']}\n   - **Data:** {data_fechamento_str}\n--------------------\n")
-
     if not os_list: message += "Nenhuma OS para exibir nesta página."
-
     keyboard = []
     nav_buttons = []
     callback_prefix = "list_open" if is_open_list else "list_closed"
@@ -259,16 +293,12 @@ async def display_os_page(update: Update, context: ContextTypes.DEFAULT_TYPE, li
         nav_buttons.append(InlineKeyboardButton("Próxima ➡️", callback_data=f"{callback_prefix}_next_{current_page + 1}"))
     if nav_buttons: keyboard.append(nav_buttons)
     keyboard.append([InlineKeyboardButton("❌ Fechar Lista", callback_data=f"{callback_prefix}_cancel")])
-    
     reply_markup = InlineKeyboardMarkup(keyboard)
-
     if update.callback_query:
         await update.callback_query.edit_message_text(message, reply_markup=reply_markup, parse_mode='HTML')
     else:
         await update.message.reply_html(message, reply_markup=reply_markup)
-
 async def start_list_open_os(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Ponto de entrada para a listagem paginada de OS abertas."""
     user_id = update.effective_user.id
     total_os = await get_open_os_count(user_id)
     if total_os == 0:
@@ -278,12 +308,9 @@ async def start_list_open_os(update: Update, context: ContextTypes.DEFAULT_TYPE)
     context.user_data['current_page'] = 0
     await display_os_page(update, context, "open")
     return PAGINATING_OS
-
 async def navigate_os_page(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Processa cliques na navegação da lista de OS abertas."""
     query = update.callback_query
     await query.answer()
-    # A lógica de cancelamento foi movida para a função cancel_pagination
     try:
         _, _, page_str = query.data.split('_')
         page = int(page_str)
@@ -293,24 +320,19 @@ async def navigate_os_page(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     except ValueError:
         await query.edit_message_text("Ocorreu um erro na navegação. Tente novamente.")
         return ConversationHandler.END
-
 async def start_list_closed_os(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Ponto de entrada para a listagem paginada de OS fechadas."""
     user_id = update.effective_user.id
     total_os = await get_closed_os_count(user_id)
     if total_os == 0:
-        await update.message.reply_text("Você não possui histórico de Ordens de Serviço.", reply_markup=MAIN_MENU_MARKUP)
+        await update.message.reply_text("Você não possui histórico de Ordens de Serviço fechadas hoje.", reply_markup=MAIN_MENU_MARKUP)
         return ConversationHandler.END
     context.user_data['total_closed_os'] = total_os
     context.user_data['current_closed_page'] = 0
     await display_os_page(update, context, "closed")
     return PAGINATING_CLOSED_OS
-
 async def navigate_closed_os_page(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Processa cliques na navegação da lista de OS fechadas."""
     query = update.callback_query
     await query.answer()
-    # A lógica de cancelamento foi movida para a função cancel_pagination
     try:
         _, _, page_str = query.data.split('_')
         page = int(page_str)
@@ -320,9 +342,7 @@ async def navigate_closed_os_page(update: Update, context: ContextTypes.DEFAULT_
     except ValueError:
         await query.edit_message_text("Ocorreu um erro na navegação. Tente novamente.")
         return ConversationHandler.END
-
 async def cancel_pagination(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Encerra a visualização da lista paginada de forma genérica."""
     query = update.callback_query
     await query.answer()
     await query.edit_message_text("Visualização da lista encerrada.")
