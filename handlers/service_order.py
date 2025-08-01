@@ -18,13 +18,13 @@ logger = logging.getLogger(__name__)
 # Abertura
 (ASK_EQUIPMENT, ASK_TAG, ASK_LOCATION, ASK_MAINT_TYPE, 
  ASK_PRIORITY, ASK_PROBLEM_DESC, CONFIRM_SAVE, 
- ASK_IF_PHOTO, GET_PHOTO) = range(7, 16)
-# Fechamento (com novos estados)
+ ASK_IF_PHOTO, GET_PHOTO, HANDLE_UPLOAD_ERROR) = range(7, 17)
+# Fechamento
 (SELECT_OS_TO_CLOSE, ASK_SOLUTION, ASK_IF_PARTS, ASK_PART_NAME, 
  ASK_PART_TAG, ASK_PART_QTY, ASK_MORE_PARTS, ASK_FINAL_STATUS, 
- ASK_IF_ATTACHMENT, GET_ATTACHMENT, ASK_IF_NOTES, GET_FINAL_NOTES) = range(16, 28)
+ ASK_IF_ATTACHMENT, GET_ATTACHMENT, HANDLE_ATTACHMENT_UPLOAD_ERROR, ASK_IF_NOTES, GET_FINAL_NOTES) = range(17, 30)
 # Paginação
-PAGINATING_OS, PAGINATING_CLOSED_OS = range(28, 30)
+PAGINATING_OS, PAGINATING_CLOSED_OS = range(30, 32)
 OS_PER_PAGE = 5
 
 # --- FLUXO DE ABERTURA DE OS ---
@@ -34,6 +34,7 @@ async def start_open_os(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
     reply_markup = InlineKeyboardMarkup(keyboard)
     await update.message.reply_text("Você selecionou 'Abrir OS'. Deseja iniciar o processo?", reply_markup=reply_markup)
     return CONFIRM_SAVE
+
 async def ask_for_equipment(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query
     await query.answer()
@@ -43,20 +44,24 @@ async def ask_for_equipment(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     else:
         await query.edit_message_text(text="Abertura de OS cancelada.")
         return await cancel(update, context)
+
 async def get_equipment_name(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     context.user_data['os_data'] = {'equipamento_nome': update.message.text}
     await update.message.reply_text("Entendido. Qual a TAG/identificador do equipamento?")
     return ASK_TAG
+
 async def get_equipment_tag(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     context.user_data['os_data']['equipamento_tag'] = update.message.text
     await update.message.reply_text("Qual o setor ou linha de produção onde o equipamento está localizado?")
     return ASK_LOCATION
+
 async def get_location(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     context.user_data['os_data']['localizacao'] = update.message.text
     keyboard = [[InlineKeyboardButton("🔧 Corretiva", callback_data="Corretiva")], [InlineKeyboardButton("📈 Preditiva", callback_data="Preditiva")], [InlineKeyboardButton("🗓️ Preventiva", callback_data="Preventiva")]]
     reply_markup = InlineKeyboardMarkup(keyboard)
     await update.message.reply_text("Qual o tipo de manutenção a ser realizada?", reply_markup=reply_markup)
     return ASK_MAINT_TYPE
+
 async def get_maintenance_type(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query
     await query.answer()
@@ -65,40 +70,86 @@ async def get_maintenance_type(update: Update, context: ContextTypes.DEFAULT_TYP
     reply_markup = InlineKeyboardMarkup(keyboard)
     await query.edit_message_text(text=f"Tipo: {query.data}. Agora, qual o nível de prioridade?", reply_markup=reply_markup)
     return ASK_PRIORITY
+
 async def get_priority(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query
     await query.answer()
     context.user_data['os_data']['prioridade'] = query.data
     await query.edit_message_text(text=f"Prioridade: {query.data}. Por favor, descreva o problema observado ou o plano de serviço.")
     return ASK_PROBLEM_DESC
+
 async def get_problem_description_and_ask_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     context.user_data['os_data']['descricao_problema'] = update.message.text
     keyboard = [[InlineKeyboardButton("📷 Sim, anexar foto", callback_data="photo_yes")], [InlineKeyboardButton("👍 Não, pular", callback_data="photo_no")]]
     reply_markup = InlineKeyboardMarkup(keyboard)
     await update.message.reply_text("Descrição salva. Deseja anexar uma foto do problema?", reply_markup=reply_markup)
     return ASK_IF_PHOTO
+
 async def prompt_for_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query
     await query.answer()
     await query.edit_message_text("Ok, por favor, envie a foto agora.")
     return GET_PHOTO
+
 async def get_photo_and_save(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     user = update.effective_user
     photo_file = await update.message.photo[-1].get_file()
     await update.message.reply_text("Recebi a foto. Fazendo upload para o servidor, aguarde...")
+    
     try:
         photo_bytearray = await photo_file.download_as_bytearray()
-        photo_bytes_for_upload = bytes(photo_bytearray)
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        file_path = f"{user.id}/abertura_{timestamp}.jpg"
-        supabase.storage.from_("anexos-os").upload(file=photo_bytes_for_upload, path=file_path, file_options={"content-type": "image/jpeg"})
+        file_path = f"{user.id}/abertura_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jpg"
+        
+        context.user_data['upload_data'] = {'bytes': bytes(photo_bytearray), 'path': file_path}
+        
+        supabase.storage.from_("anexos-os").upload(file=context.user_data['upload_data']['bytes'], path=file_path, file_options={"content-type": "image/jpeg"})
         public_url = supabase.storage.from_("anexos-os").get_public_url(file_path)
         context.user_data['os_data']['url_foto'] = public_url
         logger.info(f"Foto enviada por {user.id} salva em: {public_url}")
+
     except Exception as e:
         logger.error(f"Erro no upload da foto para o Supabase: {e}")
-        await update.message.reply_text("Desculpe, ocorreu um erro ao salvar sua foto.")
+        keyboard = [
+            [InlineKeyboardButton("Tentar novamente", callback_data="upload_retry")],
+            [InlineKeyboardButton("Continuar sem foto", callback_data="upload_skip")]
+        ]
+        await update.message.reply_text(
+            "Desculpe, ocorreu um erro ao salvar sua foto. Deseja tentar novamente?",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+        return HANDLE_UPLOAD_ERROR
+
     return await save_os_and_finish(update, context)
+
+async def handle_invalid_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Lida com casos em que o usuário envia algo que não é uma foto."""
+    await update.message.reply_text(
+        "Isso não é uma foto. Por favor, envie uma imagem válida ou digite /cancelar para sair."
+    )
+    return GET_PHOTO
+
+async def handle_upload_error(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Lida com a decisão do usuário após uma falha de upload."""
+    query = update.callback_query
+    await query.answer()
+    
+    if query.data == "upload_retry":
+        await query.edit_message_text("Tentando o upload novamente...")
+        try:
+            upload_data = context.user_data['upload_data']
+            supabase.storage.from_("anexos-os").upload(file=upload_data['bytes'], path=upload_data['path'], file_options={"content-type": "image/jpeg"})
+            public_url = supabase.storage.from_("anexos-os").get_public_url(upload_data['path'])
+            context.user_data['os_data']['url_foto'] = public_url
+            return await save_os_and_finish(update, context)
+        except Exception as e:
+            logger.error(f"Segunda tentativa de upload falhou: {e}")
+            await query.edit_message_text("A segunda tentativa também falhou. Continuando sem a foto.")
+            return await save_os_and_finish(update, context)
+            
+    else: # upload_skip
+        await query.edit_message_text("Ok, continuando o registro sem a foto.")
+        return await save_os_and_finish(update, context)
+
 async def save_os_and_finish(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query
     if query:
@@ -137,6 +188,7 @@ async def start_close_os(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     reply_markup = InlineKeyboardMarkup(keyboard)
     await update.message.reply_text("Selecione a Ordem de Serviço que deseja fechar:", reply_markup=reply_markup)
     return SELECT_OS_TO_CLOSE
+
 async def ask_for_solution(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query
     await query.answer()
@@ -147,6 +199,7 @@ async def ask_for_solution(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     context.user_data['os_id_to_close'] = os_id
     await query.edit_message_text(text=f"Fechando OS #{os_id}.\n\nDescreva o diagnóstico final e a solução aplicada.")
     return ASK_SOLUTION
+
 async def get_solution_and_ask_parts(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     context.user_data['close_solution'] = update.message.text
     context.user_data['parts_list'] = []
@@ -154,20 +207,24 @@ async def get_solution_and_ask_parts(update: Update, context: ContextTypes.DEFAU
     reply_markup = InlineKeyboardMarkup(keyboard)
     await update.message.reply_text("Houve troca de peças nesta manutenção?", reply_markup=reply_markup)
     return ASK_IF_PARTS
+
 async def ask_part_name(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query
     await query.answer()
     num_peca = len(context.user_data.get('parts_list', [])) + 1
     await query.edit_message_text(text=f"Ok, vamos adicionar as peças trocadas.\n\nPara a Peça {num_peca}, qual o nome dela?")
     return ASK_PART_NAME
+
 async def get_part_name(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     context.user_data['current_part_name'] = update.message.text
     await update.message.reply_text("Qual o TAG/Código (Part Number) dessa peça?")
     return ASK_PART_TAG
+
 async def get_part_tag(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     context.user_data['current_part_tag'] = update.message.text
     await update.message.reply_text("Qual a quantidade utilizada desta peça?")
     return ASK_PART_QTY
+
 async def get_part_qty_and_ask_more(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     try:
         qty = int(update.message.text)
@@ -180,6 +237,7 @@ async def get_part_qty_and_ask_more(update: Update, context: ContextTypes.DEFAUL
     except ValueError:
         await update.message.reply_text("Quantidade inválida. Por favor, digite apenas números.")
         return ASK_PART_QTY
+
 async def ask_for_final_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query
     await query.answer()
@@ -187,6 +245,7 @@ async def ask_for_final_status(update: Update, context: ContextTypes.DEFAULT_TYP
     reply_markup = InlineKeyboardMarkup(keyboard)
     await query.edit_message_text(text="Entendido. Qual o status final desta Ordem de Serviço?", reply_markup=reply_markup)
     return ASK_FINAL_STATUS
+
 async def get_final_status_and_ask_if_attachment(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query
     await query.answer()
@@ -195,6 +254,7 @@ async def get_final_status_and_ask_if_attachment(update: Update, context: Contex
     reply_markup = InlineKeyboardMarkup(keyboard)
     await query.edit_message_text(text=f"Status definido como '{query.data}'.\n\nDeseja anexar um arquivo (foto, PDF) ao fechamento?", reply_markup=reply_markup)
     return ASK_IF_ATTACHMENT
+
 async def prompt_for_attachment(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query
     await query.answer()
@@ -202,7 +262,8 @@ async def prompt_for_attachment(update: Update, context: ContextTypes.DEFAULT_TY
         await query.edit_message_text("Ok, por favor, envie o anexo agora.")
         return GET_ATTACHMENT
     else:
-        return await prompt_for_final_notes(update, context, from_button=True)
+        return await prompt_for_final_notes(update, context)
+
 async def get_attachment_and_ask_notes(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     user = update.effective_user
     attachment = update.message.document or update.message.photo[-1]
@@ -210,38 +271,85 @@ async def get_attachment_and_ask_notes(update: Update, context: ContextTypes.DEF
     await update.message.reply_text("Recebi o anexo. Fazendo upload, aguarde...")
     try:
         file_bytearray = await file.download_as_bytearray()
-        file_bytes_for_upload = bytes(file_bytearray)
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         original_filename = attachment.file_name if hasattr(attachment, 'file_name') else f"{timestamp}.jpg"
         file_path = f"{user.id}/fechamento_{timestamp}_{original_filename}"
-        supabase.storage.from_("anexos-os").upload(file=file_bytes_for_upload, path=file_path)
+        context.user_data['upload_data'] = {'bytes': bytes(file_bytearray), 'path': file_path}
+        supabase.storage.from_("anexos-os").upload(file=context.user_data['upload_data']['bytes'], path=file_path)
         public_url = supabase.storage.from_("anexos-os").get_public_url(file_path)
         context.user_data.setdefault('close_data', {})['url_arquivo_fechamento'] = public_url
-        logger.info(f"Anexo de fechamento enviado por {user.id} salvo em: {public_url}")
+        logger.info(f"Anexo de fechamento salvo em: {public_url}")
     except Exception as e:
         logger.error(f"Erro no upload do anexo de fechamento: {e}")
-        await update.message.reply_text("Desculpe, ocorreu um erro ao salvar seu anexo.")
+        keyboard = [
+            [InlineKeyboardButton("Tentar novamente", callback_data="upload_attach_retry")],
+            [InlineKeyboardButton("Continuar sem anexo", callback_data="upload_attach_skip")]
+        ]
+        await update.message.reply_text(
+            "Desculpe, ocorreu um erro ao salvar seu anexo. Deseja tentar novamente?",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+        return HANDLE_ATTACHMENT_UPLOAD_ERROR
     return await prompt_for_final_notes(update, context)
-async def prompt_for_final_notes(update: Update, context: ContextTypes.DEFAULT_TYPE, from_button: bool = False) -> int:
-    keyboard = [[InlineKeyboardButton("👍 Não, finalizar", callback_data="notes_no")]]
+
+async def handle_invalid_attachment(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Lida com casos em que o usuário envia algo que não é um anexo válido."""
+    await update.message.reply_text(
+        "Isso não é um anexo válido. Por favor, envie uma foto ou documento, ou digite /cancelar."
+    )
+    return GET_ATTACHMENT
+
+async def handle_attachment_upload_error(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    query = update.callback_query
+    await query.answer()
+    if query.data == "upload_attach_retry":
+        await query.edit_message_text("Tentando o upload novamente...")
+        try:
+            upload_data = context.user_data['upload_data']
+            supabase.storage.from_("anexos-os").upload(file=upload_data['bytes'], path=upload_data['path'])
+            public_url = supabase.storage.from_("anexos-os").get_public_url(upload_data['path'])
+            context.user_data.setdefault('close_data', {})['url_arquivo_fechamento'] = public_url
+            return await prompt_for_final_notes(update, context)
+        except Exception as e:
+            logger.error(f"Segunda tentativa de upload de anexo falhou: {e}")
+            await query.edit_message_text("A segunda tentativa também falhou. Continuando sem o anexo.")
+            return await prompt_for_final_notes(update, context)
+    else: # upload_attach_skip
+        await query.edit_message_text("Ok, continuando o fechamento sem o anexo.")
+        return await prompt_for_final_notes(update, context)
+
+async def prompt_for_final_notes(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    keyboard = [
+        [InlineKeyboardButton("✍️ Sim, adicionar", callback_data="notes_yes")],
+        [InlineKeyboardButton("👍 Não, finalizar", callback_data="notes_no")]
+    ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     message_text = "Deseja adicionar notas finais, observações ou recomendações?"
-    if from_button:
-        query = update.callback_query
-        await query.answer()
-        await query.edit_message_text(text=message_text, reply_markup=reply_markup)
+
+    if update.callback_query:
+        await update.callback_query.answer()
+        await update.callback_query.edit_message_text(text=message_text, reply_markup=reply_markup)
     else:
         await update.message.reply_text(text=message_text, reply_markup=reply_markup)
+        
     return ASK_IF_NOTES
+
 async def get_final_notes_and_save(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    if update.callback_query and update.callback_query.data == 'notes_yes':
+        await update.callback_query.answer()
+        await update.callback_query.edit_message_text(text="Ok. Por favor, digite as notas finais agora.")
+        return GET_FINAL_NOTES
+    
     context.user_data['final_notes'] = update.message.text
     return await _save_and_end_closing_conversation(update, context)
+
 async def finalize_without_notes(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query
     await query.answer()
     await query.edit_message_text(text="Ok, finalizando o fechamento...")
     context.user_data['final_notes'] = ''
     return await _save_and_end_closing_conversation(update, context)
+
 async def _save_and_end_closing_conversation(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     os_id = context.user_data['os_id_to_close']
     close_data = context.user_data.get('close_data', {})
@@ -298,6 +406,7 @@ async def display_os_page(update: Update, context: ContextTypes.DEFAULT_TYPE, li
         await update.callback_query.edit_message_text(message, reply_markup=reply_markup, parse_mode='HTML')
     else:
         await update.message.reply_html(message, reply_markup=reply_markup)
+
 async def start_list_open_os(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     user_id = update.effective_user.id
     total_os = await get_open_os_count(user_id)
@@ -308,6 +417,7 @@ async def start_list_open_os(update: Update, context: ContextTypes.DEFAULT_TYPE)
     context.user_data['current_page'] = 0
     await display_os_page(update, context, "open")
     return PAGINATING_OS
+
 async def navigate_os_page(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query
     await query.answer()
@@ -320,6 +430,7 @@ async def navigate_os_page(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     except ValueError:
         await query.edit_message_text("Ocorreu um erro na navegação. Tente novamente.")
         return ConversationHandler.END
+
 async def start_list_closed_os(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     user_id = update.effective_user.id
     total_os = await get_closed_os_count(user_id)
@@ -330,6 +441,7 @@ async def start_list_closed_os(update: Update, context: ContextTypes.DEFAULT_TYP
     context.user_data['current_closed_page'] = 0
     await display_os_page(update, context, "closed")
     return PAGINATING_CLOSED_OS
+
 async def navigate_closed_os_page(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query
     await query.answer()
@@ -342,6 +454,7 @@ async def navigate_closed_os_page(update: Update, context: ContextTypes.DEFAULT_
     except ValueError:
         await query.edit_message_text("Ocorreu um erro na navegação. Tente novamente.")
         return ConversationHandler.END
+
 async def cancel_pagination(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query
     await query.answer()

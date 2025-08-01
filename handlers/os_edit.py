@@ -1,5 +1,6 @@
 import logging
 import math
+import asyncio
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes, ConversationHandler
 
@@ -18,26 +19,18 @@ logger = logging.getLogger(__name__)
 PAGINATING_EDIT_OS, SELECT_FIELD, GET_NEW_VALUE_TEXT, GET_NEW_VALUE_BUTTON = range(50, 54)
 OS_PER_PAGE = 5
 
-# Mapeamento dos campos para nomes amigáveis
+# Mapeamento de campos
 ALL_EDITABLE_FIELDS = {
-    "equipamento_nome": "Nome do Equipamento",
-    "equipamento_tag": "TAG do Equipamento",
-    "localizacao": "Localização",
-    "tipo_manutencao": "Tipo de Manutenção",
-    "prioridade": "Prioridade",
-    "descricao_problema": "Descrição do Problema",
-    "diagnostico_solucao": "Diagnóstico/Solução",
-    "notas_finais": "Notas Finais",
+    "equipamento_nome": "Nome do Equipamento", "equipamento_tag": "TAG do Equipamento",
+    "localizacao": "Localização", "tipo_manutencao": "Tipo de Manutenção",
+    "prioridade": "Prioridade", "descricao_problema": "Descrição do Problema",
+    "diagnostico_solucao": "Diagnóstico/Solução", "notas_finais": "Notas Finais",
     "status_os": "Status da OS",
 }
-
-# Campos que podem ser editados quando a OS está 'Aberta'
 FIELDS_FOR_OPEN_OS = [
     "equipamento_nome", "equipamento_tag", "localizacao",
     "tipo_manutencao", "prioridade", "descricao_problema"
 ]
-
-# Campos que usam botões em vez de texto
 FIELDS_WITH_BUTTONS = {
     "tipo_manutencao": TIPO_MANUTENCAO_KEYBOARD,
     "prioridade": PRIORIDADE_KEYBOARD,
@@ -153,7 +146,6 @@ async def show_edit_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     return SELECT_FIELD
 
 async def prompt_for_new_value(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Pede ao usuário o novo valor, mostrando botões ou pedindo texto conforme o campo."""
     query = update.callback_query
     await query.answer()
 
@@ -163,27 +155,28 @@ async def prompt_for_new_value(update: Update, context: ContextTypes.DEFAULT_TYP
     field_name = ALL_EDITABLE_FIELDS.get(field_key, "Desconhecido")
     current_value = context.user_data.get('os_details', {}).get(field_key, 'não preenchido')
     
-    # Se o campo deve usar botões, mostra o teclado correspondente
+    prompt_message = (
+        f"A editar: **{field_name}**\n"
+        f"Valor atual: `{current_value}`\n\n"
+    )
+
     if field_key in FIELDS_WITH_BUTTONS:
         keyboard = FIELDS_WITH_BUTTONS[field_key]
         reply_markup = InlineKeyboardMarkup(keyboard)
         await query.edit_message_text(
-            f"A editar: **{field_name}**\nValor atual: `{current_value}`\n\nSelecione o novo valor:",
+            prompt_message + "Selecione o novo valor:",
             reply_markup=reply_markup,
             parse_mode='Markdown'
         )
         return GET_NEW_VALUE_BUTTON
-    
-    # Caso contrário, pede para o usuário digitar o texto
     else:
         await query.edit_message_text(
-            f"A editar: **{field_name}**\nValor atual: `{current_value}`\n\nPor favor, envie o novo valor:",
+            prompt_message + "Por favor, envie o novo valor:",
             parse_mode='Markdown'
         )
         return GET_NEW_VALUE_TEXT
 
 async def update_field_from_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Atualiza o campo a partir de um clique de botão e volta ao menu."""
     query = update.callback_query
     await query.answer()
 
@@ -191,6 +184,7 @@ async def update_field_from_button(update: Update, context: ContextTypes.DEFAULT
     os_id = context.user_data['os_id_to_edit']
     field_key = context.user_data['field_to_edit']
 
+    await query.edit_message_text("Atualizando campo, aguarde...")
     success = await update_os_field(os_id, field_key, new_value)
     
     if success:
@@ -198,43 +192,34 @@ async def update_field_from_button(update: Update, context: ContextTypes.DEFAULT
     else:
         await query.edit_message_text("❌ Erro ao atualizar o campo.")
         
-    # Pausa por um momento para o usuário ver a mensagem de sucesso/erro
-    await context.bot.send_chat_action(chat_id=update.effective_chat.id, action='typing')
-    import asyncio
     await asyncio.sleep(1.5)
-
     return await show_edit_menu(update, context)
 
 async def update_field_from_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Atualiza o campo a partir de um texto enviado e volta ao menu."""
     new_value = update.message.text
     os_id = context.user_data['os_id_to_edit']
     field_key = context.user_data['field_to_edit']
     
-    # Deleta a mensagem do usuário e a mensagem de prompt para manter o chat limpo
-    # (A mensagem de prompt é a última mensagem do bot)
-    await context.bot.delete_message(chat_id=update.effective_chat.id, message_id=update.message.message_id)
-    if context.user_data.get('last_bot_message_id'):
-        await context.bot.delete_message(chat_id=update.effective_chat.id, message_id=context.user_data['last_bot_message_id'])
-
+    last_message = await update.message.reply_text("Processando...")
+    
     success = await update_os_field(os_id, field_key, new_value)
     
     if success:
-        await update.message.reply_text("✅ Campo atualizado com sucesso!")
+        await last_message.edit_text("✅ Campo atualizado com sucesso!")
     else:
-        await update.message.reply_text("❌ Erro ao atualizar o campo.")
-        
+        await last_message.edit_text("❌ Erro ao atualizar o campo.")
+    
+    await context.bot.delete_message(chat_id=update.effective_chat.id, message_id=update.message.message_id)
+
+    await asyncio.sleep(1.5)
     return await show_edit_menu(update, context)
 
 async def finish_editing(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """
-    Encerra o fluxo de edição de forma limpa, enviando uma mensagem de sucesso.
-    """
     query = update.callback_query
     await query.answer()
     await query.edit_message_text(
         text="✅ Edição concluída com sucesso!",
-        reply_markup=None # Remove os botões
+        reply_markup=None 
     )
     # Limpa os dados da conversa para a próxima edição
     if context.user_data:

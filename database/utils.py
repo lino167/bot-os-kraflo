@@ -227,3 +227,28 @@ async def get_unique_parts_history(user_id: int, search_term: str) -> list | Non
     except Exception as e:
         logger.error(f"Erro ao buscar histórico de peças: {e}")
         return None
+    
+async def get_os_by_status_and_date(user_id: int, status: str, target_date: str) -> list | None:
+    """
+    Busca todas as OS de um usuário com um status específico em uma data específica.
+    O status pode ser 'Aberta' ou 'Fechada' (que inclui 'Pendente').
+    """
+    try:
+        user_data = await get_user_data(user_id)
+        if not user_data: return None
+
+        start_date = f"{target_date} 00:00:00"
+        end_date = f"{target_date} 23:59:59"
+
+        query = supabase.table("ordens_de_servico").select("*").eq("tecnico_id", user_id)
+
+        if status == 'Aberta':
+            query = query.eq("status_os", "Aberta").gte("data_abertura", start_date).lte("data_abertura", end_date)
+        else: # 'Fechada'
+            query = query.neq("status_os", "Aberta").gte("data_fechamento", start_date).lte("data_fechamento", end_date)
+
+        response = query.order("id", desc=False).execute()
+        return response.data
+    except Exception as e:
+        logger.error(f"Erro ao buscar OS por status e data para o usuário {user_id}: {e}")
+        return None
