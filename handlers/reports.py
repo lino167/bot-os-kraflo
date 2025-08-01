@@ -241,6 +241,8 @@ def _create_detailed_pdf_page(pdf: PDF, data: dict):
     pdf.set_font('Arial', 'B', 12)
     pdf.cell(0, 8, sanitize_text('1. Detalhes do Profissional'), ln=True, border='B')
     pdf.ln(4)
+
+    #--- SEÇÃO DE INFORMAÇÕES DO TÉCNICO ---
     pdf.set_font('Arial', '', 10)
     tecnico_info = data.get('tecnico', {}) or {}
     pdf.cell(0, 6, sanitize_text(f"Nome: {tecnico_info.get('nome_completo', 'N/A')}"), ln=True)
@@ -255,6 +257,8 @@ def _create_detailed_pdf_page(pdf: PDF, data: dict):
         pdf.set_font('Arial', '', 11)
         pdf.multi_cell(0, 7, sanitize_text(f"  {value if value else 'Não preenchido'}"))
         pdf.ln(1)
+        
+    # --- SEÇÃO DE DETALHES DA ORDEM DE SERVIÇO ---
     add_field("Máquina", f"{data.get('equipamento_nome', 'N/A')} ({data.get('equipamento_tag', 'N/A')})")
     add_field("Tipo de Manutenção", data.get('tipo_manutencao'))
     add_field("Problema Apresentado", data.get('descricao_problema'))
@@ -266,25 +270,42 @@ def _create_detailed_pdf_page(pdf: PDF, data: dict):
     pdf.cell(0, 7, sanitize_text(f"  Abertura: {format_date(data.get('data_abertura'))}"), ln=True)
     pdf.cell(0, 7, sanitize_text(f"  Fechamento: {format_date(data.get('data_fechamento'))}"), ln=True)
     pdf.ln(4)
+
+    # --- SEÇÃO DE ANEXOS ---
     pdf.set_font('Arial', 'B', 11)
     pdf.cell(0, 7, "Anexos", ln=True)
+    pdf.ln(1) # Adiciona um pequeno espaço após o título da seção
+
     pdf.set_font('Arial', '', 10)
+    
     url_foto_abertura = data.get('url_foto')
     if url_foto_abertura:
-        pdf.cell(25, 6, "Anexo Abertura:")
-        pdf.set_text_color(0, 0, 255)
-        pdf.cell(0, 6, "Clique para ver o anexo", ln=True, link=url_foto_abertura)
-        pdf.set_text_color(45, 52, 54)
+        # Escreve o label e quebra a linha
+        pdf.cell(0, 6, "Anexo Abertura:", ln=True) 
+        pdf.set_text_color(0, 0, 255) # Cor azul para o link
+        # Adiciona um recuo e escreve o texto do link clicável em uma nova linha
+        pdf.cell(0, 6, "   Clique aqui para ver o anexo", ln=True, link=url_foto_abertura) 
+        pdf.set_text_color(45, 52, 54) # Volta para a cor de texto padrão
+        pdf.ln(2) # Adiciona um espaço extra após o link
+
     url_arquivo_fechamento = data.get('url_arquivo_fechamento')
     if url_arquivo_fechamento:
-        pdf.cell(25, 6, "Anexo Fechamento:")
+        # Escreve o label e quebra a linha
+        pdf.cell(0, 6, "Anexo Fechamento:", ln=True) 
         pdf.set_text_color(0, 0, 255)
-        pdf.cell(0, 6, "Clique para ver o anexo", ln=True, link=url_arquivo_fechamento)
+        # Adiciona um recuo e escreve o texto do link clicável em uma nova linha
+        pdf.cell(0, 6, "   Clique aqui para ver o anexo", ln=True, link=url_arquivo_fechamento)
         pdf.set_text_color(45, 52, 54)
+        pdf.ln(2)
+    
+    # Mensagem caso não existam anexos
     if not url_foto_abertura and not url_arquivo_fechamento:
         pdf.cell(0, 6, "  Nenhum anexo encontrado.", ln=True)
-    pdf.ln(4)
-    pecas = data.get('pecas', [])
+        
+    pdf.ln(4) # Espaço antes da próxima seção
+
+    # --- SEÇÃO DE PEÇAS UTILIZADAS ---
+    pecas = data.get('pecas_utilizadas', [])
     if pecas:
         pdf.set_font('Arial', 'B', 11)
         pdf.cell(0, 7, "Peças Utilizadas", ln=True)
