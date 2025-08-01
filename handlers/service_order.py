@@ -14,80 +14,144 @@ from database.utils import (
 
 logger = logging.getLogger(__name__)
 
-# --- Definição dos Estados da Conversa ---
-# Abertura
+# --- Estados da Conversa ---
 (ASK_EQUIPMENT, ASK_TAG, ASK_LOCATION, ASK_MAINT_TYPE, 
  ASK_PRIORITY, ASK_PROBLEM_DESC, CONFIRM_SAVE, 
  ASK_IF_PHOTO, GET_PHOTO, HANDLE_UPLOAD_ERROR) = range(7, 17)
-# Fechamento
 (SELECT_OS_TO_CLOSE, ASK_SOLUTION, ASK_IF_PARTS, ASK_PART_NAME, 
  ASK_PART_TAG, ASK_PART_QTY, ASK_MORE_PARTS, ASK_FINAL_STATUS, 
- ASK_IF_ATTACHMENT, GET_ATTACHMENT, HANDLE_ATTACHMENT_UPLOAD_ERROR, ASK_IF_NOTES, GET_FINAL_NOTES) = range(17, 30)
-# Paginação
+ ASK_IF_ATTACHMENT, GET_ATTACHMENT, HANDLE_ATTACHMENT_UPLOAD_ERROR, 
+ ASK_IF_NOTES, GET_FINAL_NOTES) = range(17, 30)
 PAGINATING_OS, PAGINATING_CLOSED_OS = range(30, 32)
 OS_PER_PAGE = 5
 
+# --- Funções Auxiliares de Navegação ---
+def add_nav_buttons(keyboard: list) -> list:
+    """Adiciona botões de Voltar e Cancelar a um teclado."""
+    keyboard.append([
+        InlineKeyboardButton("⬅️ Voltar", callback_data="back"),
+        InlineKeyboardButton("❌ Cancelar", callback_data="cancel_op")
+    ])
+    return keyboard
+
+def push_state(context: ContextTypes.DEFAULT_TYPE, state: int):
+    """Adiciona o estado atual ao histórico de navegação."""
+    history = context.user_data.setdefault('state_history', [])
+    if not history or history[-1] != state:
+        history.append(state)
+
 # --- FLUXO DE ABERTURA DE OS ---
 
-async def start_open_os(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    keyboard = [[InlineKeyboardButton("Sim, começar", callback_data="start_os")], [InlineKeyboardButton("Não, voltar", callback_data="cancel_os")]]
+async def start_open_os(update: Update, context: ContextTypes.DEFAULT_TYPE, is_back: bool = False) -> int:
+    context.user_data.clear()
+    push_state(context, CONFIRM_SAVE)
+    keyboard = [[InlineKeyboardButton("Sim, começar", callback_data="start_os")], [InlineKeyboardButton("Não, cancelar", callback_data="cancel_op")]]
     reply_markup = InlineKeyboardMarkup(keyboard)
-    await update.message.reply_text("Você selecionou 'Abrir OS'. Deseja iniciar o processo?", reply_markup=reply_markup)
+    
+    if update.message:
+        await update.message.reply_text("Você selecionou 'Abrir OS'. Deseja iniciar o processo?", reply_markup=reply_markup)
+    elif update.callback_query:
+        await update.callback_query.edit_message_text("Você selecionou 'Abrir OS'. Deseja iniciar o processo?", reply_markup=reply_markup)
+        
     return CONFIRM_SAVE
 
-async def ask_for_equipment(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+async def ask_for_equipment(update: Update, context: ContextTypes.DEFAULT_TYPE, is_back: bool = False) -> int:
     query = update.callback_query
     await query.answer()
-    if query.data == 'start_os':
-        await query.edit_message_text(text="Ótimo! Qual equipamento ou ativo precisa de manutenção?")
-        return ASK_EQUIPMENT
-    else:
-        await query.edit_message_text(text="Abertura de OS cancelada.")
-        return await cancel(update, context)
+    
+    if not is_back:
+        push_state(context, ASK_EQUIPMENT)
+    
+    await query.edit_message_text(text="Ótimo! Qual equipamento ou ativo precisa de manutenção?")
+    return ASK_EQUIPMENT
 
-async def get_equipment_name(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    context.user_data['os_data'] = {'equipamento_nome': update.message.text}
+async def get_equipment_name(update: Update, context: ContextTypes.DEFAULT_TYPE, is_back: bool = False) -> int:
+    if not is_back:
+        push_state(context, ASK_TAG)
+        context.user_data.setdefault('os_data', {})['equipamento_nome'] = update.message.text
+    
     await update.message.reply_text("Entendido. Qual a TAG/identificador do equipamento?")
     return ASK_TAG
 
-async def get_equipment_tag(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    context.user_data['os_data']['equipamento_tag'] = update.message.text
+async def get_equipment_tag(update: Update, context: ContextTypes.DEFAULT_TYPE, is_back: bool = False) -> int:
+    if not is_back:
+        push_state(context, ASK_LOCATION)
+        context.user_data['os_data']['equipamento_tag'] = update.message.text
     await update.message.reply_text("Qual o setor ou linha de produção onde o equipamento está localizado?")
     return ASK_LOCATION
 
-async def get_location(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    context.user_data['os_data']['localizacao'] = update.message.text
-    keyboard = [[InlineKeyboardButton("🔧 Corretiva", callback_data="Corretiva")], [InlineKeyboardButton("📈 Preditiva", callback_data="Preditiva")], [InlineKeyboardButton("🗓️ Preventiva", callback_data="Preventiva")]]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    await update.message.reply_text("Qual o tipo de manutenção a ser realizada?", reply_markup=reply_markup)
+async def get_location(update: Update, context: ContextTypes.DEFAULT_TYPE, is_back: bool = False) -> int:
+    if not is_back:
+        push_state(context, ASK_MAINT_TYPE)
+        context.user_data['os_data']['localizacao'] = update.message.text
+    
+    keyboard = [
+        [InlineKeyboardButton("🔧 Corretiva", callback_data="Corretiva")],
+        [InlineKeyboardButton("📈 Preditiva", callback_data="Preditiva")],
+        [InlineKeyboardButton("🗓️ Preventiva", callback_data="Preventiva")]
+    ]
+    reply_markup = InlineKeyboardMarkup(add_nav_buttons(keyboard))
+
+    if is_back:
+        await update.callback_query.edit_message_text("Qual o tipo de manutenção a ser realizada?", reply_markup=reply_markup)
+    else:
+        await update.message.reply_text("Qual o tipo de manutenção a ser realizada?", reply_markup=reply_markup)
+
     return ASK_MAINT_TYPE
 
-async def get_maintenance_type(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+async def get_maintenance_type(update: Update, context: ContextTypes.DEFAULT_TYPE, is_back: bool = False) -> int:
     query = update.callback_query
     await query.answer()
-    context.user_data['os_data']['tipo_manutencao'] = query.data
-    keyboard = [[InlineKeyboardButton("🚨 Urgente", callback_data="Urgente")], [InlineKeyboardButton("⚠️ Alta", callback_data="Alta")], [InlineKeyboardButton("🔷 Média", callback_data="Média")], [InlineKeyboardButton("⚪ Baixa", callback_data="Baixa")]]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    await query.edit_message_text(text=f"Tipo: {query.data}. Agora, qual o nível de prioridade?", reply_markup=reply_markup)
+    
+    if not is_back:
+        push_state(context, ASK_PRIORITY)
+        context.user_data['os_data']['tipo_manutencao'] = query.data
+    
+    keyboard = [
+        [InlineKeyboardButton("🚨 Urgente", callback_data="Urgente")],
+        [InlineKeyboardButton("⚠️ Alta", callback_data="Alta")],
+        [InlineKeyboardButton("🔷 Média", callback_data="Média")],
+        [InlineKeyboardButton("⚪ Baixa", callback_data="Baixa")]
+    ]
+    reply_markup = InlineKeyboardMarkup(add_nav_buttons(keyboard))
+    
+    message = f"Tipo: {context.user_data['os_data']['tipo_manutencao']}.\nAgora, qual o nível de prioridade?"
+    await query.edit_message_text(text=message, reply_markup=reply_markup)
     return ASK_PRIORITY
 
-async def get_priority(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+async def get_priority(update: Update, context: ContextTypes.DEFAULT_TYPE, is_back: bool = False) -> int:
     query = update.callback_query
     await query.answer()
-    context.user_data['os_data']['prioridade'] = query.data
-    await query.edit_message_text(text=f"Prioridade: {query.data}. Por favor, descreva o problema observado ou o plano de serviço.")
+
+    if not is_back:
+        push_state(context, ASK_PROBLEM_DESC)
+        context.user_data['os_data']['prioridade'] = query.data
+    
+    await query.edit_message_text(text=f"Prioridade: {context.user_data['os_data']['prioridade']}. Por favor, descreva o problema observado ou o plano de serviço.")
     return ASK_PROBLEM_DESC
 
-async def get_problem_description_and_ask_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    context.user_data['os_data']['descricao_problema'] = update.message.text
-    keyboard = [[InlineKeyboardButton("📷 Sim, anexar foto", callback_data="photo_yes")], [InlineKeyboardButton("👍 Não, pular", callback_data="photo_no")]]
-    reply_markup = InlineKeyboardMarkup(keyboard)
+async def get_problem_description_and_ask_photo(update: Update, context: ContextTypes.DEFAULT_TYPE, is_back: bool = False) -> int:
+    if not is_back:
+        push_state(context, ASK_IF_PHOTO)
+        context.user_data['os_data']['descricao_problema'] = update.message.text
+    
+    keyboard = [
+        [InlineKeyboardButton("📷 Sim, anexar foto", callback_data="photo_yes")],
+        [InlineKeyboardButton("👍 Não, pular", callback_data="photo_no")]
+    ]
+    reply_markup = InlineKeyboardMarkup(add_nav_buttons(keyboard))
     await update.message.reply_text("Descrição salva. Deseja anexar uma foto do problema?", reply_markup=reply_markup)
     return ASK_IF_PHOTO
 
-async def prompt_for_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+async def prompt_for_photo(update: Update, context: ContextTypes.DEFAULT_TYPE, is_back: bool = False) -> int:
     query = update.callback_query
     await query.answer()
+
+    if not is_back:
+        if query.data == 'photo_no':
+            return await save_os_and_finish(update, context)
+        push_state(context, GET_PHOTO)
+    
     await query.edit_message_text("Ok, por favor, envie a foto agora.")
     return GET_PHOTO
 
@@ -113,23 +177,22 @@ async def get_photo_and_save(update: Update, context: ContextTypes.DEFAULT_TYPE)
             [InlineKeyboardButton("Tentar novamente", callback_data="upload_retry")],
             [InlineKeyboardButton("Continuar sem foto", callback_data="upload_skip")]
         ]
+        reply_markup = InlineKeyboardMarkup(add_nav_buttons(keyboard))
         await update.message.reply_text(
             "Desculpe, ocorreu um erro ao salvar sua foto. Deseja tentar novamente?",
-            reply_markup=InlineKeyboardMarkup(keyboard)
+            reply_markup=reply_markup
         )
         return HANDLE_UPLOAD_ERROR
 
     return await save_os_and_finish(update, context)
 
 async def handle_invalid_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Lida com casos em que o usuário envia algo que não é uma foto."""
     await update.message.reply_text(
         "Isso não é uma foto. Por favor, envie uma imagem válida ou digite /cancelar para sair."
     )
     return GET_PHOTO
 
 async def handle_upload_error(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Lida com a decisão do usuário após uma falha de upload."""
     query = update.callback_query
     await query.answer()
     
@@ -151,6 +214,7 @@ async def handle_upload_error(update: Update, context: ContextTypes.DEFAULT_TYPE
         return await save_os_and_finish(update, context)
 
 async def save_os_and_finish(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    # Esta função finaliza a conversa, não precisa de 'is_back' ou 'push_state'
     query = update.callback_query
     if query:
         await query.answer()
@@ -177,92 +241,130 @@ async def save_os_and_finish(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 # --- FLUXO DE FECHAMENTO DE OS ---
 
-async def start_close_os(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+async def start_close_os(update: Update, context: ContextTypes.DEFAULT_TYPE, is_back: bool = False) -> int:
+    context.user_data.clear()
+    push_state(context, SELECT_OS_TO_CLOSE)
     user_id = update.effective_user.id
     open_os_list = await get_open_os_paginated(user_id, 0, 50) 
     if not open_os_list:
         await update.message.reply_text("Você não possui nenhuma Ordem de Serviço aberta.", reply_markup=MAIN_MENU_MARKUP)
         return ConversationHandler.END
     keyboard = [[InlineKeyboardButton(f"#{os['id']} - {os['equipamento_nome']} ({os['equipamento_tag']})", callback_data=f"close_{os['id']}")] for os in open_os_list]
-    keyboard.append([InlineKeyboardButton("Cancelar", callback_data="cancel_close")])
+    keyboard.append([InlineKeyboardButton("❌ Cancelar", callback_data="cancel_op")])
     reply_markup = InlineKeyboardMarkup(keyboard)
-    await update.message.reply_text("Selecione a Ordem de Serviço que deseja fechar:", reply_markup=reply_markup)
+    
+    if update.message:
+        await update.message.reply_text("Selecione a Ordem de Serviço que deseja fechar:", reply_markup=reply_markup)
+    elif update.callback_query:
+        await update.callback_query.edit_message_text("Selecione a Ordem de Serviço que deseja fechar:", reply_markup=reply_markup)
+        
     return SELECT_OS_TO_CLOSE
 
-async def ask_for_solution(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+async def ask_for_solution(update: Update, context: ContextTypes.DEFAULT_TYPE, is_back: bool = False) -> int:
     query = update.callback_query
     await query.answer()
-    if query.data == 'cancel_close':
-        await query.edit_message_text(text="Fechamento de OS cancelado.")
-        return await cancel(update, context)
-    os_id = int(query.data.split('_')[1])
-    context.user_data['os_id_to_close'] = os_id
+
+    if not is_back:
+        push_state(context, ASK_SOLUTION)
+        os_id = int(query.data.split('_')[1])
+        context.user_data['os_id_to_close'] = os_id
+    else:
+        os_id = context.user_data['os_id_to_close']
+
     await query.edit_message_text(text=f"Fechando OS #{os_id}.\n\nDescreva o diagnóstico final e a solução aplicada.")
     return ASK_SOLUTION
 
-async def get_solution_and_ask_parts(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    context.user_data['close_solution'] = update.message.text
-    context.user_data['parts_list'] = []
+async def get_solution_and_ask_parts(update: Update, context: ContextTypes.DEFAULT_TYPE, is_back: bool = False) -> int:
+    if not is_back:
+        push_state(context, ASK_IF_PARTS)
+        context.user_data['close_solution'] = update.message.text
+        context.user_data['parts_list'] = []
+
     keyboard = [[InlineKeyboardButton("✅ Sim", callback_data="parts_yes")], [InlineKeyboardButton("❌ Não", callback_data="parts_no")]]
-    reply_markup = InlineKeyboardMarkup(keyboard)
+    reply_markup = InlineKeyboardMarkup(add_nav_buttons(keyboard))
     await update.message.reply_text("Houve troca de peças nesta manutenção?", reply_markup=reply_markup)
     return ASK_IF_PARTS
 
-async def ask_part_name(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+async def ask_part_name(update: Update, context: ContextTypes.DEFAULT_TYPE, is_back: bool = False) -> int:
     query = update.callback_query
     await query.answer()
+    
+    if not is_back:
+        if query.data == 'parts_no':
+            return await ask_for_final_status(update, context)
+        push_state(context, ASK_PART_NAME)
+    
     num_peca = len(context.user_data.get('parts_list', [])) + 1
     await query.edit_message_text(text=f"Ok, vamos adicionar as peças trocadas.\n\nPara a Peça {num_peca}, qual o nome dela?")
     return ASK_PART_NAME
 
-async def get_part_name(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    context.user_data['current_part_name'] = update.message.text
+async def get_part_name(update: Update, context: ContextTypes.DEFAULT_TYPE, is_back: bool = False) -> int:
+    if not is_back:
+        push_state(context, ASK_PART_TAG)
+        context.user_data['current_part_name'] = update.message.text
     await update.message.reply_text("Qual o TAG/Código (Part Number) dessa peça?")
     return ASK_PART_TAG
 
-async def get_part_tag(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    context.user_data['current_part_tag'] = update.message.text
+async def get_part_tag(update: Update, context: ContextTypes.DEFAULT_TYPE, is_back: bool = False) -> int:
+    if not is_back:
+        push_state(context, ASK_PART_QTY)
+        context.user_data['current_part_tag'] = update.message.text
     await update.message.reply_text("Qual a quantidade utilizada desta peça?")
     return ASK_PART_QTY
 
-async def get_part_qty_and_ask_more(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    try:
-        qty = int(update.message.text)
-        part = {"nome_peca": context.user_data['current_part_name'], "tag_peca": context.user_data['current_part_tag'], "quantidade": qty}
-        context.user_data['parts_list'].append(part)
-        keyboard = [[InlineKeyboardButton("➕ Sim", callback_data="parts_yes")], [InlineKeyboardButton("👍 Não, continuar", callback_data="parts_no")]]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        await update.message.reply_text(f"✅ Peça '{part['nome_peca']}' adicionada.\nDeseja adicionar outra peça?", reply_markup=reply_markup)
-        return ASK_MORE_PARTS
-    except ValueError:
-        await update.message.reply_text("Quantidade inválida. Por favor, digite apenas números.")
-        return ASK_PART_QTY
+async def get_part_qty_and_ask_more(update: Update, context: ContextTypes.DEFAULT_TYPE, is_back: bool = False) -> int:
+    if not is_back:
+        try:
+            qty = int(update.message.text)
+            part = {"nome_peca": context.user_data['current_part_name'], "tag_peca": context.user_data['current_part_tag'], "quantidade": qty}
+            context.user_data['parts_list'].append(part)
+        except (ValueError, KeyError):
+            await update.message.reply_text("Entrada inválida. Por favor, digite apenas números para a quantidade.")
+            return ASK_PART_QTY
+        push_state(context, ASK_MORE_PARTS)
+    
+    part_name = context.user_data.get('parts_list', [{'nome_peca': ''}])[-1]['nome_peca']
+    keyboard = [[InlineKeyboardButton("➕ Sim", callback_data="parts_yes")], [InlineKeyboardButton("👍 Não, continuar", callback_data="parts_no")]]
+    reply_markup = InlineKeyboardMarkup(add_nav_buttons(keyboard))
+    await update.message.reply_text(f"✅ Peça '{part_name}' adicionada.\nDeseja adicionar outra peça?", reply_markup=reply_markup)
+    return ASK_MORE_PARTS
 
-async def ask_for_final_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+async def ask_for_final_status(update: Update, context: ContextTypes.DEFAULT_TYPE, is_back: bool = False) -> int:
     query = update.callback_query
     await query.answer()
+
+    if not is_back:
+        push_state(context, ASK_FINAL_STATUS)
+
     keyboard = [[InlineKeyboardButton("✅ Concluída", callback_data="Concluída")], [InlineKeyboardButton("⏳ Pendente", callback_data="Pendente")]]
-    reply_markup = InlineKeyboardMarkup(keyboard)
+    reply_markup = InlineKeyboardMarkup(add_nav_buttons(keyboard))
     await query.edit_message_text(text="Entendido. Qual o status final desta Ordem de Serviço?", reply_markup=reply_markup)
     return ASK_FINAL_STATUS
 
-async def get_final_status_and_ask_if_attachment(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+async def get_final_status_and_ask_if_attachment(update: Update, context: ContextTypes.DEFAULT_TYPE, is_back: bool = False) -> int:
     query = update.callback_query
     await query.answer()
-    context.user_data['final_status'] = query.data
+
+    if not is_back:
+        push_state(context, ASK_IF_ATTACHMENT)
+        context.user_data['final_status'] = query.data
+
     keyboard = [[InlineKeyboardButton("📎 Sim, anexar", callback_data="attach_yes")], [InlineKeyboardButton("👍 Não, pular", callback_data="attach_no")]]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    await query.edit_message_text(text=f"Status definido como '{query.data}'.\n\nDeseja anexar um arquivo (foto, PDF) ao fechamento?", reply_markup=reply_markup)
+    reply_markup = InlineKeyboardMarkup(add_nav_buttons(keyboard))
+    await query.edit_message_text(text=f"Status definido como '{context.user_data['final_status']}'.\n\nDeseja anexar um arquivo (foto, PDF) ao fechamento?", reply_markup=reply_markup)
     return ASK_IF_ATTACHMENT
 
-async def prompt_for_attachment(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+async def prompt_for_attachment(update: Update, context: ContextTypes.DEFAULT_TYPE, is_back: bool = False) -> int:
     query = update.callback_query
     await query.answer()
-    if query.data == 'attach_yes':
-        await query.edit_message_text("Ok, por favor, envie o anexo agora.")
-        return GET_ATTACHMENT
-    else:
-        return await prompt_for_final_notes(update, context)
+    
+    if not is_back:
+        if query.data == 'attach_no':
+            return await prompt_for_final_notes(update, context)
+        push_state(context, GET_ATTACHMENT)
+        
+    await query.edit_message_text("Ok, por favor, envie o anexo agora.")
+    return GET_ATTACHMENT
 
 async def get_attachment_and_ask_notes(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     user = update.effective_user

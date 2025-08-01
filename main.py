@@ -24,8 +24,7 @@ logger = logging.getLogger(__name__)
 async def check_registration_and_start(update: Update, context: ContextTypes.DEFAULT_TYPE, start_function):
     """Função de guarda: verifica se o usuário está cadastrado antes de executar uma ação."""
     user = update.effective_user
-    if not user:
-        return ConversationHandler.END
+    if not user: return ConversationHandler.END
     if await is_user_registered(user.id):
         return await start_function(update, context)
     else:
@@ -38,7 +37,39 @@ def main() -> None:
     persistence = PicklePersistence(filepath="bot_persistence")
     application = Application.builder().token(TELEGRAM_TOKEN).persistence(persistence).build()
 
-    # --- DEFINIÇÃO DOS HANDLERS DE CONVERSA ---
+    # --- MAPA DE ESTADOS PARA FUNÇÕES (PARA O BOTÃO 'VOLTAR') ---
+    application.bot_data['state_map'] = {
+        # Abertura de OS
+        service_order.CONFIRM_SAVE: service_order.start_open_os,
+        service_order.ASK_EQUIPMENT: service_order.ask_for_equipment,
+        service_order.ASK_TAG: service_order.get_equipment_name,
+        service_order.ASK_LOCATION: service_order.get_equipment_tag,
+        service_order.ASK_MAINT_TYPE: service_order.get_location,
+        service_order.ASK_PRIORITY: service_order.get_maintenance_type,
+        service_order.ASK_PROBLEM_DESC: service_order.get_priority,
+        service_order.ASK_IF_PHOTO: service_order.get_problem_description_and_ask_photo,
+        service_order.GET_PHOTO: service_order.prompt_for_photo,
+        # Fechamento de OS
+        service_order.SELECT_OS_TO_CLOSE: service_order.start_close_os,
+        service_order.ASK_SOLUTION: service_order.ask_for_solution,
+        service_order.ASK_IF_PARTS: service_order.get_solution_and_ask_parts,
+        service_order.ASK_PART_NAME: service_order.ask_part_name,
+        service_order.ASK_PART_TAG: service_order.get_part_name,
+        service_order.ASK_PART_QTY: service_order.get_part_tag,
+        service_order.ASK_MORE_PARTS: service_order.get_part_qty_and_ask_more,
+        service_order.ASK_FINAL_STATUS: service_order.ask_for_final_status,
+        service_order.ASK_IF_ATTACHMENT: service_order.get_final_status_and_ask_if_attachment,
+        service_order.GET_ATTACHMENT: service_order.prompt_for_attachment,
+        service_order.ASK_IF_NOTES: service_order.prompt_for_final_notes,
+    }
+
+    # --- HANDLERS DE NAVEGAÇÃO UNIVERSAIS ---
+    nav_handlers = [
+        CallbackQueryHandler(common.back, pattern="^back$"),
+        CallbackQueryHandler(common.cancel, pattern="^cancel_op$"),
+    ]
+
+    # --- HANDLERS DE CONVERSA ---
     
     registration_conv = ConversationHandler(
         entry_points=[CommandHandler("start", common.start)],
@@ -54,62 +85,58 @@ def main() -> None:
             registration.GET_SECTOR: [MessageHandler(filters.TEXT & ~filters.COMMAND, registration.get_sector_and_save)],
         },
         fallbacks=[CommandHandler("cancelar", common.cancel)],
-        per_user=True, per_chat=True,
+        per_user=True, per_chat=True
     )
 
     open_os_conv = ConversationHandler(
         entry_points=[MessageHandler(filters.Regex("^🆕 Abrir OS$"), lambda u, c: check_registration_and_start(u, c, service_order.start_open_os))],
         states={
-            service_order.CONFIRM_SAVE: [CallbackQueryHandler(service_order.ask_for_equipment, pattern='^start_os$|^cancel_os$')],
+            service_order.CONFIRM_SAVE: [CallbackQueryHandler(service_order.ask_for_equipment, pattern='^start_os$')] + nav_handlers,
             service_order.ASK_EQUIPMENT: [MessageHandler(filters.TEXT & ~filters.COMMAND, service_order.get_equipment_name)],
             service_order.ASK_TAG: [MessageHandler(filters.TEXT & ~filters.COMMAND, service_order.get_equipment_tag)],
             service_order.ASK_LOCATION: [MessageHandler(filters.TEXT & ~filters.COMMAND, service_order.get_location)],
-            service_order.ASK_MAINT_TYPE: [CallbackQueryHandler(service_order.get_maintenance_type)],
-            service_order.ASK_PRIORITY: [CallbackQueryHandler(service_order.get_priority)],
+            service_order.ASK_MAINT_TYPE: [CallbackQueryHandler(service_order.get_maintenance_type, pattern="^(?!back$|cancel_op$).*$")] + nav_handlers,
+            service_order.ASK_PRIORITY: [CallbackQueryHandler(service_order.get_priority, pattern="^(?!back$|cancel_op$).*$")] + nav_handlers,
             service_order.ASK_PROBLEM_DESC: [MessageHandler(filters.TEXT & ~filters.COMMAND, service_order.get_problem_description_and_ask_photo)],
             service_order.ASK_IF_PHOTO: [
                 CallbackQueryHandler(service_order.prompt_for_photo, pattern='^photo_yes$'),
                 CallbackQueryHandler(service_order.save_os_and_finish, pattern='^photo_no$')
-            ],
+            ] + nav_handlers,
             service_order.GET_PHOTO: [
                 MessageHandler(filters.PHOTO, service_order.get_photo_and_save),
                 MessageHandler(filters.TEXT & ~filters.COMMAND, service_order.handle_invalid_photo)
             ],
-            service_order.HANDLE_UPLOAD_ERROR: [
-                CallbackQueryHandler(service_order.handle_upload_error, pattern="^upload_")
-            ]
+            service_order.HANDLE_UPLOAD_ERROR: [CallbackQueryHandler(service_order.handle_upload_error, pattern="^upload_")] + nav_handlers,
         },
         fallbacks=[CommandHandler("cancelar", common.cancel)],
-        per_user=True, per_chat=True,
+        per_user=True, per_chat=True
     )
     
     close_os_conv = ConversationHandler(
         entry_points=[MessageHandler(filters.Regex("^✅ Fechar OS$"), lambda u, c: check_registration_and_start(u, c, service_order.start_close_os))],
         states={
-            service_order.SELECT_OS_TO_CLOSE: [CallbackQueryHandler(service_order.ask_for_solution, pattern="^close_")],
+            service_order.SELECT_OS_TO_CLOSE: [CallbackQueryHandler(service_order.ask_for_solution, pattern="^close_")] + nav_handlers,
             service_order.ASK_SOLUTION: [MessageHandler(filters.TEXT & ~filters.COMMAND, service_order.get_solution_and_ask_parts)],
-            service_order.ASK_IF_PARTS: [CallbackQueryHandler(service_order.ask_part_name, pattern='^parts_yes$'), CallbackQueryHandler(service_order.ask_for_final_status, pattern='^parts_no$')],
+            service_order.ASK_IF_PARTS: [CallbackQueryHandler(service_order.ask_part_name, pattern='^parts_yes$'), CallbackQueryHandler(service_order.ask_for_final_status, pattern='^parts_no$')] + nav_handlers,
             service_order.ASK_PART_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, service_order.get_part_name)],
             service_order.ASK_PART_TAG: [MessageHandler(filters.TEXT & ~filters.COMMAND, service_order.get_part_tag)],
             service_order.ASK_PART_QTY: [MessageHandler(filters.TEXT & ~filters.COMMAND, service_order.get_part_qty_and_ask_more)],
-            service_order.ASK_MORE_PARTS: [CallbackQueryHandler(service_order.ask_part_name, pattern='^parts_yes$'), CallbackQueryHandler(service_order.ask_for_final_status, pattern='^parts_no$')],
-            service_order.ASK_FINAL_STATUS: [CallbackQueryHandler(service_order.get_final_status_and_ask_if_attachment)],
-            service_order.ASK_IF_ATTACHMENT: [CallbackQueryHandler(service_order.prompt_for_attachment, pattern='^attach_')],
+            service_order.ASK_MORE_PARTS: [CallbackQueryHandler(service_order.ask_part_name, pattern='^parts_yes$'), CallbackQueryHandler(service_order.ask_for_final_status, pattern='^parts_no$')] + nav_handlers,
+            service_order.ASK_FINAL_STATUS: [CallbackQueryHandler(service_order.get_final_status_and_ask_if_attachment, pattern="^(?!back$|cancel_op$).*$")] + nav_handlers,
+            service_order.ASK_IF_ATTACHMENT: [CallbackQueryHandler(service_order.prompt_for_attachment, pattern='^attach_')] + nav_handlers,
             service_order.GET_ATTACHMENT: [
                 MessageHandler(filters.PHOTO | filters.Document.ALL, service_order.get_attachment_and_ask_notes),
                 MessageHandler(filters.TEXT & ~filters.COMMAND, service_order.handle_invalid_attachment)
             ],
-            service_order.HANDLE_ATTACHMENT_UPLOAD_ERROR: [
-                CallbackQueryHandler(service_order.handle_attachment_upload_error, pattern="^upload_attach_")
-            ],
+            service_order.HANDLE_ATTACHMENT_UPLOAD_ERROR: [CallbackQueryHandler(service_order.handle_attachment_upload_error, pattern="^upload_attach_")] + nav_handlers,
             service_order.ASK_IF_NOTES: [
                 CallbackQueryHandler(service_order.get_final_notes_and_save, pattern='^notes_yes$'), 
                 CallbackQueryHandler(service_order.finalize_without_notes, pattern='^notes_no$')
-            ],
+            ] + nav_handlers,
             service_order.GET_FINAL_NOTES: [MessageHandler(filters.TEXT & ~filters.COMMAND, service_order.get_final_notes_and_save)],
         },
-        fallbacks=[CommandHandler("cancelar", common.cancel), CallbackQueryHandler(common.cancel, pattern='^cancel_close$')],
-        per_user=True, per_chat=True,
+        fallbacks=[CommandHandler("cancelar", common.cancel)],
+        per_user=True, per_chat=True
     )
 
     report_conv = ConversationHandler(
