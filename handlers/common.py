@@ -92,3 +92,42 @@ async def back(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         logger.warning(f"Função não encontrada no state_map para o estado: {previous_state}")
         await query.edit_message_text("Ocorreu um erro ao tentar voltar. A operação será cancelada.")
         return await cancel(update, context)
+
+async def handle_invalid_input(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """
+    MELHORIA: Lida com inputs inesperados (ex: botões) quando o bot espera texto.
+    Avisa o utilizador e mantém a conversa no estado atual.
+    """
+    state_history = context.user_data.get('state_history', [])
+    
+    if not state_history:
+        # Se não houver histórico, não podemos saber onde voltar, então cancelamos.
+        return await cancel(update, context)
+
+    current_state = state_history[-1]
+    
+    await update.message.reply_text(
+        "⚠️ Ops! Parece que enviou algo que eu não esperava.\n\n"
+        "Por favor, envie a informação que pedi em formato de texto. "
+        "Se quiser sair, pode usar o botão '❌ Cancelar' abaixo."
+    )
+    
+    # Retorna para o mesmo estado, aguardando o input correto.
+    return current_state
+
+async def about(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    MELHORIA: Envia uma mensagem com informações sobre o projeto.
+    """
+    about_text = (
+        "ℹ️ **Sobre o Kraflo OS Bot**\n\n"
+        "Este bot foi desenvolvido como uma solução moderna e eficiente para otimizar o fluxo de trabalho de técnicos de manutenção no chão de fábrica.\n\n"
+        "**Funcionalidades Principais:**\n"
+        "- Gestão completa de Ordens de Serviço\n"
+        "- Controlo de peças utilizadas\n"
+        "- Upload de fotos e anexos\n"
+        "- Geração de relatórios em PDF e CSV\n\n"
+        "**Tecnologias:** Python, `python-telegram-bot`, Supabase (PostgreSQL).\n\n"
+        "Este projeto é um trabalho de zacarias lino ramos filho."
+    )
+    await update.message.reply_text(about_text, reply_markup=MAIN_MENU_MARKUP)

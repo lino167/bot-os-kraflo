@@ -4,7 +4,11 @@ import pandas as pd
 from datetime import datetime
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes, ConversationHandler, filters
-
+from handlers.states import (
+    CONFIRM_SAVE, ASK_EQUIPMENT, ASK_TAG, ASK_LOCATION, ASK_MAINT_TYPE, ASK_PRIORITY, ASK_PROBLEM_DESC, ASK_IF_PHOTO, GET_PHOTO, HANDLE_UPLOAD_ERROR,
+    SELECT_OS_TO_CLOSE, ASK_SOLUTION, ASK_IF_PARTS, ASK_PART_NAME, ASK_PART_TAG, ASK_PART_QTY, ASK_MORE_PARTS, ASK_FINAL_STATUS, ASK_IF_ATTACHMENT, GET_ATTACHMENT, HANDLE_ATTACHMENT_UPLOAD_ERROR,
+    ASK_IF_NOTES, GET_FINAL_NOTES, PAGINATING_OS, PAGINATING_CLOSED_OS
+)
 from config import supabase
 from handlers.common import cancel, MAIN_MENU_MARKUP
 from database.utils import (
@@ -14,15 +18,6 @@ from database.utils import (
 
 logger = logging.getLogger(__name__)
 
-# --- Estados da Conversa ---
-(ASK_EQUIPMENT, ASK_TAG, ASK_LOCATION, ASK_MAINT_TYPE, 
- ASK_PRIORITY, ASK_PROBLEM_DESC, CONFIRM_SAVE, 
- ASK_IF_PHOTO, GET_PHOTO, HANDLE_UPLOAD_ERROR) = range(7, 17)
-(SELECT_OS_TO_CLOSE, ASK_SOLUTION, ASK_IF_PARTS, ASK_PART_NAME, 
- ASK_PART_TAG, ASK_PART_QTY, ASK_MORE_PARTS, ASK_FINAL_STATUS, 
- ASK_IF_ATTACHMENT, GET_ATTACHMENT, HANDLE_ATTACHMENT_UPLOAD_ERROR, 
- ASK_IF_NOTES, GET_FINAL_NOTES) = range(17, 30)
-PAGINATING_OS, PAGINATING_CLOSED_OS = range(30, 32)
 OS_PER_PAGE = 5
 
 # --- Funções Auxiliares de Navegação ---

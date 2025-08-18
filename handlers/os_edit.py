@@ -12,11 +12,13 @@ from database.utils import (
 from handlers.ui_components import (
     PRIORIDADE_KEYBOARD, TIPO_MANUTENCAO_KEYBOARD, STATUS_OS_KEYBOARD
 )
+from handlers.states import (
+    PAGINATING_EDIT_OS, SELECT_FIELD, GET_NEW_VALUE_TEXT, GET_NEW_VALUE_BUTTON
+)
 
 logger = logging.getLogger(__name__)
 
-# --- Definição dos Estados da Conversa ---
-PAGINATING_EDIT_OS, SELECT_FIELD, GET_NEW_VALUE_TEXT, GET_NEW_VALUE_BUTTON = range(50, 54)
+# Número de OS por página na paginação
 OS_PER_PAGE = 5
 
 # Mapeamento de campos

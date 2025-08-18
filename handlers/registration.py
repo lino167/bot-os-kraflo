@@ -2,22 +2,15 @@ import logging
 from telegram import Update, ReplyKeyboardRemove, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes, ConversationHandler
 
-# Importações dos nossos próprios módulos
 from config import supabase
-from handlers.ui_components import MAIN_MENU_MARKUP # <<< MUDANÇA AQUI
+from handlers.ui_components import MAIN_MENU_MARKUP
 from database.utils import is_user_registered
+from handlers.states import (
+    ASK_COMPANY_NAME, ASK_IF_COMPANY_CODE, GET_COMPANY_CODE,
+    GET_FULL_NAME, GET_ROLE, GET_SECTOR
+)
 
 logger = logging.getLogger(__name__)
-
-# --- Definição dos Estados da Conversa de Cadastro ---
-(
-    ASK_COMPANY_NAME,
-    ASK_IF_COMPANY_CODE,
-    GET_COMPANY_CODE,
-    GET_FULL_NAME,
-    GET_ROLE,
-    GET_SECTOR,
-) = range(40, 46)
 
 async def ask_company_name(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Inicia o fluxo de cadastro pedindo o nome da empresa."""

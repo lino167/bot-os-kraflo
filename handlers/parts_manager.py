@@ -1,14 +1,22 @@
 import logging
 from telegram import Update
-from telegram.ext import ContextTypes, ConversationHandler, MessageHandler, filters
+from telegram.ext import (
+    Application, CommandHandler, ConversationHandler, 
+    MessageHandler, filters, CallbackQueryHandler, ContextTypes,
+    PicklePersistence
+)
 
-from database.utils import get_unique_parts_history
-from handlers.common import MAIN_MENU_MARKUP
+from config import TELEGRAM_TOKEN
+from handlers import common, registration, service_order, reports, os_edit, os_delete, parts_manager
+from database.utils import is_user_registered, get_unique_parts_history
+from handlers import states
+from handlers.ui_components import MAIN_MENU_MARKUP
 
 logger = logging.getLogger(__name__)
 
-# Estados da conversa
-ASK_SEARCH_TERM, SHOW_RESULTS = range(70, 72)
+# Defina ou importe o estado ASK_SEARCH_TERM
+ASK_SEARCH_TERM = 1000  # Ou importe de handlers.states se já estiver lá
+
 
 async def start_parts_consult(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Inicia o fluxo de consulta de peças."""

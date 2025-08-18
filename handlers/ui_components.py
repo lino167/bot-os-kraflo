@@ -5,7 +5,8 @@ REPLY_KEYBOARD = [
     ["🆕 Abrir OS", "✅ Fechar OS"],
     ["📋 Listar Abertas", "🗂️ Listar Fechadas"],
     ["📊 Relatórios", "✏️ Editar OS"],
-    ["🗑️ Deletar OS", "⚙️ Consultar Peças"], # <<< NOVOS BOTÕES
+    ["🗑️ Deletar OS", "⚙️ Consultar Peças"],
+    ["ℹ️ Sobre", "❌ Cancelar" ]
 ]
 MAIN_MENU_MARKUP = ReplyKeyboardMarkup(REPLY_KEYBOARD, resize_keyboard=True)
 

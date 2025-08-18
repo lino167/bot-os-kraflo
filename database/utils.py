@@ -1,6 +1,6 @@
 import logging
 from config import supabase
-from datetime import datetime, time
+from datetime import datetime, time, timedelta
 
 logger = logging.getLogger(__name__)
 
@@ -61,6 +61,7 @@ async def get_open_os_count(user_id: int) -> int:
         return 0
 
 async def close_os_in_db(os_id: int, close_data: dict, parts_data: list) -> bool:
+    """Atualiza uma OS com dados de fecho e insere as peças utilizadas."""
     try:
         supabase.table('ordens_de_servico').update(close_data).eq('id', os_id).execute()
         logger.info(f"OS #{os_id} atualizada para status '{close_data.get('status_os')}'.")
@@ -75,9 +76,7 @@ async def close_os_in_db(os_id: int, close_data: dict, parts_data: list) -> bool
         return False
 
 async def get_all_os_for_report(user_id: int, start_date: str = None, end_date: str = None) -> list[dict] | None:
-    """
-    Busca todas as OS de uma empresa, com base no usuário, com filtro de data opcional.
-    """
+    """Busca todas as OS de uma empresa, com base no usuário, com filtro de data opcional."""
     try:
         user_data = await get_user_data(user_id)
         if not user_data:
@@ -103,11 +102,11 @@ async def get_all_os_for_report(user_id: int, start_date: str = None, end_date: 
         return None
 
 async def get_single_os_details(os_id: int) -> dict | None:
-    """Busca todos os detalhes de uma única OS."""
+    """Busca todos os detalhes de uma única OS, incluindo técnico e peças."""
     try:
         response = (
             supabase.table("ordens_de_servico")
-            .select("*, tecnico:tecnicos(nome_completo, funcao, codigo_empresa), pecas:pecas_utilizadas(*)")
+            .select("*, tecnico:tecnicos(nome_completo, funcao, codigo_empresa), pecas_utilizadas(*)")
             .eq("id", os_id)
             .single()
             .execute()
@@ -118,17 +117,17 @@ async def get_single_os_details(os_id: int) -> dict | None:
         return None
 
 async def get_closed_os_paginated(user_id: int, page: int, page_size: int) -> list | None:
-    """Busca uma 'página' de OS fechadas ou pendentes NO DIA DE HOJE para um técnico."""
+    """Busca uma 'página' de OS fechadas ou pendentes nas últimas 24 horas para um técnico."""
     try:
         offset = page * page_size
-        today_start = datetime.combine(datetime.today(), time.min).isoformat()
-        today_end = datetime.combine(datetime.today(), time.max).isoformat()
+        # MELHORIA: Filtra pelas últimas 24 horas em vez de "hoje"
+        time_threshold = (datetime.now() - timedelta(hours=24)).isoformat()
         
         response = supabase.table('ordens_de_servico').select(
             'id, equipamento_nome, status_os, data_fechamento'
         ).eq('tecnico_id', user_id).neq(
             'status_os', 'Aberta'
-        ).gte('data_fechamento', today_start).lte('data_fechamento', today_end).order('id', desc=True).range(offset, offset + page_size - 1).execute()
+        ).gte('data_fechamento', time_threshold).order('id', desc=True).range(offset, offset + page_size - 1).execute()
         
         return response.data
     except Exception as e:
@@ -136,16 +135,16 @@ async def get_closed_os_paginated(user_id: int, page: int, page_size: int) -> li
         return None
 
 async def get_closed_os_count(user_id: int) -> int:
-    """Conta o número total de OS fechadas ou pendentes NO DIA DE HOJE para um usuário."""
+    """Conta o número total de OS fechadas ou pendentes nas últimas 24 horas para um usuário."""
     try:
-        today_start = datetime.combine(datetime.today(), time.min).isoformat()
-        today_end = datetime.combine(datetime.today(), time.max).isoformat()
+        # MELHORIA: Filtra pelas últimas 24 horas em vez de "hoje"
+        time_threshold = (datetime.now() - timedelta(hours=24)).isoformat()
         
         response = supabase.table('ordens_de_servico').select(
             'id', count='exact'
         ).eq('tecnico_id', user_id).neq(
             'status_os', 'Aberta'
-        ).gte('data_fechamento', today_start).lte('data_fechamento', today_end).execute()
+        ).gte('data_fechamento', time_threshold).execute()
         
         return response.count
     except Exception as e:
@@ -153,12 +152,12 @@ async def get_closed_os_count(user_id: int) -> int:
         return 0
     
 async def get_editable_os_count(user_id: int) -> int:
-    """Conta o número total de OS editáveis (status 'Aberta' ou fechadas hoje)."""
+    """Conta o número total de OS editáveis (status 'Aberta' ou fechadas nas últimas 24h)."""
     try:
-        today_start = datetime.combine(datetime.today(), time.min).isoformat()
-        today_end = datetime.combine(datetime.today(), time.max).isoformat()
+        # MELHORIA: Filtra pelas últimas 24 horas em vez de "hoje"
+        time_threshold = (datetime.now() - timedelta(hours=24)).isoformat()
         
-        filter_str = f"status_os.eq.Aberta,and(status_os.neq.Aberta,data_fechamento.gte.{today_start},data_fechamento.lte.{today_end})"
+        filter_str = f"status_os.eq.Aberta,and(status_os.neq.Aberta,data_fechamento.gte.{time_threshold})"
         
         response = supabase.table('ordens_de_servico').select(
             'id', count='exact'
@@ -170,13 +169,13 @@ async def get_editable_os_count(user_id: int) -> int:
         return 0
     
 async def get_editable_os_paginated(user_id: int, page: int, page_size: int) -> list | None:
-    """Busca uma 'página' de OS editáveis (status 'Aberta' ou fechadas hoje)."""
+    """Busca uma 'página' de OS editáveis (status 'Aberta' ou fechadas nas últimas 24h)."""
     try:
         offset = page * page_size
-        today_start = datetime.combine(datetime.today(), time.min).isoformat()
-        today_end = datetime.combine(datetime.today(), time.max).isoformat()
+        # MELHORIA: Filtra pelas últimas 24 horas em vez de "hoje"
+        time_threshold = (datetime.now() - timedelta(hours=24)).isoformat()
 
-        filter_str = f"status_os.eq.Aberta,and(status_os.neq.Aberta,data_fechamento.gte.{today_start},data_fechamento.lte.{today_end})"
+        filter_str = f"status_os.eq.Aberta,and(status_os.neq.Aberta,data_fechamento.gte.{time_threshold})"
 
         response = supabase.table('ordens_de_servico').select(
             'id, equipamento_nome, status_os, data_abertura'
@@ -191,10 +190,10 @@ async def update_os_field(os_id: int, field_name: str, new_value: any) -> bool:
     """Atualiza um campo específico de uma Ordem de Serviço."""
     try:
         response = supabase.table('ordens_de_servico').update({field_name: new_value}).eq('id', os_id).execute()
-        if not hasattr(response, 'error') or response.error is None:
-            logger.info(f"Campo '{field_name}' da OS #{os_id} atualizado com sucesso.")
-            return True
-        return False
+        # A API do Supabase mudou, a verificação de erro não é mais necessária desta forma.
+        # Se não houver exceção, consideramos sucesso.
+        logger.info(f"Campo '{field_name}' da OS #{os_id} atualizado com sucesso.")
+        return True
     except Exception as e:
         logger.error(f"Erro ao atualizar campo da OS #{os_id}: {e}")
         return False

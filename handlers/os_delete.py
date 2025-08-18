@@ -6,11 +6,12 @@ from telegram.ext import ContextTypes, ConversationHandler
 from database.utils import get_os_by_status_and_date, delete_os_by_id
 from handlers.calendar_helper import create_calendar
 from handlers.common import cancel
+from handlers.states import (
+    CHOOSE_STATUS, SELECT_DATE, LIST_OS_FOR_DELETION, CONFIRM_DELETE
+)
 
 logger = logging.getLogger(__name__)
 
-# Novos estados da conversa
-CHOOSE_STATUS, SELECT_DATE, LIST_OS_FOR_DELETION, CONFIRM_DELETE = range(60, 64)
 
 async def start_delete_os(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Inicia o fluxo perguntando o status da OS a ser deletada."""

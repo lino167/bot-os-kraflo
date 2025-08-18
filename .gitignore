@@ -1,20 +1,23 @@
-# Ambiente Virtual
+#Ambiente Virtual
 .venv/
 venv/
 
-# Arquivos de Cache do Python
-__pycache__/
+#Arquivos de Cache do Python
+pycache/
 *.pyc
 *.pyo
 *.pyd
 
-# Arquivo de variáveis de ambiente
+#Arquivo de variáveis de ambiente
 .env
 
-# Arquivos de banco de dados SQLite (se usarmos no futuro)
+#Arquivos de banco de dados SQLite (se usarmos no futuro)
 *.db
 *.sqlite3
 
-# Arquivos de IDEs
+#Arquivos de IDEs
 .vscode/
 .idea/
+
+#Ficheiro de persistência do bot
+bot_persistence*
