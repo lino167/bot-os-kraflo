@@ -10,7 +10,7 @@ from handlers.states import (
     ASK_IF_NOTES, GET_FINAL_NOTES, PAGINATING_OS, PAGINATING_CLOSED_OS
 )
 from config import supabase
-from handlers.common import cancel, MAIN_MENU_MARKUP
+from handlers.ui_components import MAIN_MENU_MARKUP
 from database.utils import (
     get_user_data, save_new_os, get_open_os_paginated, get_open_os_count, 
     close_os_in_db, get_closed_os_paginated, get_closed_os_count
@@ -183,7 +183,7 @@ async def get_photo_and_save(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 async def handle_invalid_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     await update.message.reply_text(
-        "Isso não é uma foto. Por favor, envie uma imagem válida ou digite /cancelar para sair."
+        "Isso não é uma foto. Por favor, envie uma imagem válida ou use o botão '❌ Cancelar'."
     )
     return GET_PHOTO
 
@@ -209,7 +209,6 @@ async def handle_upload_error(update: Update, context: ContextTypes.DEFAULT_TYPE
         return await save_os_and_finish(update, context)
 
 async def save_os_and_finish(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    # Esta função finaliza a conversa, não precisa de 'is_back' ou 'push_state'
     query = update.callback_query
     if query:
         await query.answer()
@@ -392,7 +391,7 @@ async def get_attachment_and_ask_notes(update: Update, context: ContextTypes.DEF
 async def handle_invalid_attachment(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Lida com casos em que o usuário envia algo que não é um anexo válido."""
     await update.message.reply_text(
-        "Isso não é um anexo válido. Por favor, envie uma foto ou documento, ou digite /cancelar."
+        "Isso não é um anexo válido. Por favor, envie uma foto ou documento, ou use o botão '❌ Cancelar'."
     )
     return GET_ATTACHMENT
 
@@ -500,9 +499,9 @@ async def display_os_page(update: Update, context: ContextTypes.DEFAULT_TYPE, li
     keyboard.append([InlineKeyboardButton("❌ Fechar Lista", callback_data=f"{callback_prefix}_cancel")])
     reply_markup = InlineKeyboardMarkup(keyboard)
     if update.callback_query:
-        await update.callback_query.edit_message_text(message, reply_markup=reply_markup, parse_mode='HTML')
+        await update.callback_query.edit_message_text(message, reply_markup=reply_markup, parse_mode='Markdown')
     else:
-        await update.message.reply_html(message, reply_markup=reply_markup)
+        await update.message.reply_markdown(message, reply_markup=reply_markup)
 
 async def start_list_open_os(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     user_id = update.effective_user.id
@@ -532,7 +531,7 @@ async def start_list_closed_os(update: Update, context: ContextTypes.DEFAULT_TYP
     user_id = update.effective_user.id
     total_os = await get_closed_os_count(user_id)
     if total_os == 0:
-        await update.message.reply_text("Você não possui histórico de Ordens de Serviço fechadas hoje.", reply_markup=MAIN_MENU_MARKUP)
+        await update.message.reply_text("Você não possui histórico de Ordens de Serviço fechadas nas últimas 24 horas.", reply_markup=MAIN_MENU_MARKUP)
         return ConversationHandler.END
     context.user_data['total_closed_os'] = total_os
     context.user_data['current_closed_page'] = 0

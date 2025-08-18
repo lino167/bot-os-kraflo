@@ -18,10 +18,8 @@ from handlers.states import (
 
 logger = logging.getLogger(__name__)
 
-# Número de OS por página na paginação
 OS_PER_PAGE = 5
 
-# Mapeamento de campos
 ALL_EDITABLE_FIELDS = {
     "equipamento_nome": "Nome do Equipamento", "equipamento_tag": "TAG do Equipamento",
     "localizacao": "Localização", "tipo_manutencao": "Tipo de Manutenção",
@@ -44,7 +42,7 @@ async def start_edit_os(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
     user_id = update.effective_user.id
     total_os = await get_editable_os_count(user_id)
     if total_os == 0:
-        await update.message.reply_text("Você não possui Ordens de Serviço abertas ou que foram fechadas hoje para editar.")
+        await update.message.reply_text("Você não possui Ordens de Serviço abertas ou que foram fechadas nas últimas 24 horas para editar.")
         return ConversationHandler.END
     
     context.user_data['edit_total_os'] = total_os
@@ -80,9 +78,9 @@ async def display_editable_os_page(update: Update, context: ContextTypes.DEFAULT
     reply_markup = InlineKeyboardMarkup(keyboard)
 
     if update.callback_query:
-        await update.callback_query.edit_message_text(message, reply_markup=reply_markup, parse_mode='HTML')
+        await update.callback_query.edit_message_text(message, reply_markup=reply_markup, parse_mode='Markdown')
     else:
-        await update.message.reply_html(message, reply_markup=reply_markup)
+        await update.message.reply_markdown(message, reply_markup=reply_markup)
 
 async def navigate_editable_os_page(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Processa os cliques nos botões de navegação da lista de edição."""
@@ -114,16 +112,15 @@ async def show_edit_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         
     context.user_data['os_details'] = os_details
 
-    # --- LÓGICA DE NEGÓCIO PARA CAMPOS EDITÁVEIS ---
     status = os_details.get('status_os')
     
     allowed_fields = {}
     if status == 'Aberta':
         for key in FIELDS_FOR_OPEN_OS:
             allowed_fields[key] = ALL_EDITABLE_FIELDS[key]
-    else: # Fechada ou Pendente
+    else:
         for key, value in ALL_EDITABLE_FIELDS.items():
-            if key != 'status_os': # Não pode editar o status se já não estiver aberta
+            if key != 'status_os':
                 allowed_fields[key] = value
 
     keyboard = []
@@ -223,7 +220,6 @@ async def finish_editing(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         text="✅ Edição concluída com sucesso!",
         reply_markup=None 
     )
-    # Limpa os dados da conversa para a próxima edição
     if context.user_data:
         context.user_data.clear()
         
