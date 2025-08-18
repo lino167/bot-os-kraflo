@@ -7,7 +7,7 @@ from telegram.ext import (
 )
 
 from config import TELEGRAM_TOKEN
-from handlers import common, registration, service_order, reports, os_edit, os_delete, parts_manager
+from handlers import common, registration, reports, os_edit, os_delete, parts_manager
 from database.utils import is_user_registered, get_unique_parts_history
 from handlers import states
 from handlers.ui_components import MAIN_MENU_MARKUP
