@@ -1,5 +1,6 @@
 import logging
 import os
+from pathlib import Path
 import pytz
 import pandas as pd
 from fpdf import FPDF
@@ -22,7 +23,9 @@ class PDF(FPDF):
         self.set_draw_color(45, 52, 54)
         self.set_text_color(45, 52, 54)
         try:
-            self.image('assets/Logo sem background.png', x=10, y=12, w=40)
+            project_root = Path(__file__).parent.parent.resolve()
+            logo_path = os.path.join(project_root, 'assets', 'Logo sem background.png')
+            self.image(logo_path, x=10, y=12, w=40)
         except FileNotFoundError:
             self.set_xy(10, 12)
             self.set_font('Arial', 'B', 12)
