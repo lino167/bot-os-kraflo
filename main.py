@@ -11,6 +11,7 @@ from handlers import (
     common, registration, os_open, os_close, os_list, reports, 
     os_edit, os_delete, parts_manager, states
 )
+from handlers.custom_filters import free_text_filter, menu_button_filter
 from database.utils import is_user_registered
 
 # Configuração do logging
@@ -42,28 +43,16 @@ def main() -> None:
 
     # --- MAPA DE ESTADOS PARA FUNÇÕES (PARA O BOTÃO 'VOLTAR') ---
     application.bot_data['state_map'] = {
-        # Abertura de OS
-        states.CONFIRM_SAVE: os_open.start_open_os,
-        states.ASK_EQUIPMENT: os_open.ask_for_equipment,
-        states.ASK_TAG: os_open.get_equipment_name,
-        states.ASK_LOCATION: os_open.get_equipment_tag,
-        states.ASK_MAINT_TYPE: os_open.get_location,
-        states.ASK_PRIORITY: os_open.get_maintenance_type,
-        states.ASK_PROBLEM_DESC: os_open.get_priority,
-        states.ASK_IF_PHOTO: os_open.get_problem_description_and_ask_photo,
-        states.GET_PHOTO: os_open.prompt_for_photo,
-        # Fechamento de OS
-        states.SELECT_OS_TO_CLOSE: os_close.start_close_os,
-        states.ASK_SOLUTION: os_close.ask_for_solution,
-        states.ASK_IF_PARTS: os_close.get_solution_and_ask_parts,
-        states.ASK_PART_NAME: os_close.ask_part_name,
-        states.ASK_PART_TAG: os_close.get_part_name,
-        states.ASK_PART_QTY: os_close.get_part_tag,
-        states.ASK_MORE_PARTS: os_close.get_part_qty_and_ask_more,
-        states.ASK_FINAL_STATUS: os_close.ask_for_final_status,
-        states.ASK_IF_ATTACHMENT: os_close.get_final_status_and_ask_if_attachment,
-        states.GET_ATTACHMENT: os_close.prompt_for_attachment,
-        states.ASK_IF_NOTES: os_close.prompt_for_final_notes,
+        states.CONFIRM_SAVE: os_open.start_open_os, states.ASK_EQUIPMENT: os_open.ask_for_equipment,
+        states.ASK_TAG: os_open.get_equipment_name, states.ASK_LOCATION: os_open.get_equipment_tag,
+        states.ASK_MAINT_TYPE: os_open.get_location, states.ASK_PRIORITY: os_open.get_maintenance_type,
+        states.ASK_PROBLEM_DESC: os_open.get_priority, states.ASK_IF_PHOTO: os_open.get_problem_description_and_ask_photo,
+        states.GET_PHOTO: os_open.prompt_for_photo, states.SELECT_OS_TO_CLOSE: os_close.start_close_os,
+        states.ASK_SOLUTION: os_close.ask_for_solution, states.ASK_IF_PARTS: os_close.get_solution_and_ask_parts,
+        states.ASK_PART_NAME: os_close.ask_part_name, states.ASK_PART_TAG: os_close.get_part_name,
+        states.ASK_PART_QTY: os_close.get_part_tag, states.ASK_MORE_PARTS: os_close.get_part_qty_and_ask_more,
+        states.ASK_FINAL_STATUS: os_close.ask_for_final_status, states.ASK_IF_ATTACHMENT: os_close.get_final_status_and_ask_if_attachment,
+        states.GET_ATTACHMENT: os_close.prompt_for_attachment, states.ASK_IF_NOTES: os_close.prompt_for_final_notes,
     }
 
     nav_handlers = [
@@ -71,25 +60,35 @@ def main() -> None:
         CallbackQueryHandler(common.cancel, pattern="^cancel_op$"),
     ]
     
-    invalid_input_handler = MessageHandler(
-        filters.Regex(r"^(?!.*(Sobre|Cancelar)).*$") & ~filters.TEXT & ~filters.COMMAND, 
-        common.handle_invalid_input
-    )
-
     # --- HANDLERS DE CONVERSA ---
     
     registration_conv = ConversationHandler(
         entry_points=[CommandHandler("start", common.start)],
         states={
-            states.ASK_COMPANY_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, registration.ask_if_company_code), invalid_input_handler],
+            states.ASK_COMPANY_NAME: [
+                MessageHandler(free_text_filter, registration.ask_if_company_code),
+                MessageHandler(menu_button_filter, common.handle_invalid_text_input)
+            ],
             states.ASK_IF_COMPANY_CODE: [
                 CallbackQueryHandler(registration.prompt_for_company_code, pattern='^code_yes$'),
                 CallbackQueryHandler(registration.ask_name_directly, pattern='^code_no$')
             ],
-            states.GET_COMPANY_CODE: [MessageHandler(filters.TEXT & ~filters.COMMAND, registration.get_company_code_and_ask_name), invalid_input_handler],
-            states.GET_FULL_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, registration.get_full_name_and_ask_role), invalid_input_handler],
-            states.GET_ROLE: [MessageHandler(filters.TEXT & ~filters.COMMAND, registration.get_role_and_ask_sector), invalid_input_handler],
-            states.GET_SECTOR: [MessageHandler(filters.TEXT & ~filters.COMMAND, registration.get_sector_and_save), invalid_input_handler],
+            states.GET_COMPANY_CODE: [
+                MessageHandler(free_text_filter, registration.get_company_code_and_ask_name),
+                MessageHandler(menu_button_filter, common.handle_invalid_text_input)
+            ],
+            states.GET_FULL_NAME: [
+                MessageHandler(free_text_filter, registration.get_full_name_and_ask_role),
+                MessageHandler(menu_button_filter, common.handle_invalid_text_input)
+            ],
+            states.GET_ROLE: [
+                MessageHandler(free_text_filter, registration.get_role_and_ask_sector),
+                MessageHandler(menu_button_filter, common.handle_invalid_text_input)
+            ],
+            states.GET_SECTOR: [
+                MessageHandler(free_text_filter, registration.get_sector_and_save),
+                MessageHandler(menu_button_filter, common.handle_invalid_text_input)
+            ],
         },
         fallbacks=[CommandHandler("cancelar", common.cancel), MessageHandler(filters.Regex("^❌ Cancelar$"), common.cancel)],
         per_user=True, per_chat=True
@@ -99,12 +98,24 @@ def main() -> None:
         entry_points=[MessageHandler(filters.Regex("^🆕 Abrir OS$"), lambda u, c: check_registration_and_start(u, c, os_open.start_open_os))],
         states={
             states.CONFIRM_SAVE: [CallbackQueryHandler(os_open.ask_for_equipment, pattern='^start_os$')] + nav_handlers,
-            states.ASK_EQUIPMENT: [MessageHandler(filters.TEXT & ~filters.COMMAND, os_open.get_equipment_name), invalid_input_handler],
-            states.ASK_TAG: [MessageHandler(filters.TEXT & ~filters.COMMAND, os_open.get_equipment_tag), invalid_input_handler],
-            states.ASK_LOCATION: [MessageHandler(filters.TEXT & ~filters.COMMAND, os_open.get_location), invalid_input_handler],
+            states.ASK_EQUIPMENT: [
+                MessageHandler(free_text_filter, os_open.get_equipment_name),
+                MessageHandler(menu_button_filter, common.handle_invalid_text_input)
+            ],
+            states.ASK_TAG: [
+                MessageHandler(free_text_filter, os_open.get_equipment_tag),
+                MessageHandler(menu_button_filter, common.handle_invalid_text_input)
+            ],
+            states.ASK_LOCATION: [
+                MessageHandler(free_text_filter, os_open.get_location),
+                MessageHandler(menu_button_filter, common.handle_invalid_text_input)
+            ],
             states.ASK_MAINT_TYPE: [CallbackQueryHandler(os_open.get_maintenance_type, pattern="^(?!back$|cancel_op$).*$")] + nav_handlers,
             states.ASK_PRIORITY: [CallbackQueryHandler(os_open.get_priority, pattern="^(?!back$|cancel_op$).*$")] + nav_handlers,
-            states.ASK_PROBLEM_DESC: [MessageHandler(filters.TEXT & ~filters.COMMAND, os_open.get_problem_description_and_ask_photo), invalid_input_handler],
+            states.ASK_PROBLEM_DESC: [
+                MessageHandler(free_text_filter, os_open.get_problem_description_and_ask_photo),
+                MessageHandler(menu_button_filter, common.handle_invalid_text_input)
+            ],
             states.ASK_IF_PHOTO: [
                 CallbackQueryHandler(os_open.prompt_for_photo, pattern='^photo_yes$'),
                 CallbackQueryHandler(os_open.save_os_and_finish, pattern='^photo_no$')
@@ -123,11 +134,23 @@ def main() -> None:
         entry_points=[MessageHandler(filters.Regex("^✅ Fechar OS$"), lambda u, c: check_registration_and_start(u, c, os_close.start_close_os))],
         states={
             states.SELECT_OS_TO_CLOSE: [CallbackQueryHandler(os_close.ask_for_solution, pattern="^close_")] + nav_handlers,
-            states.ASK_SOLUTION: [MessageHandler(filters.TEXT & ~filters.COMMAND, os_close.get_solution_and_ask_parts), invalid_input_handler],
+            states.ASK_SOLUTION: [
+                MessageHandler(free_text_filter, os_close.get_solution_and_ask_parts),
+                MessageHandler(menu_button_filter, common.handle_invalid_text_input)
+            ],
             states.ASK_IF_PARTS: [CallbackQueryHandler(os_close.ask_part_name, pattern='^parts_yes$'), CallbackQueryHandler(os_close.ask_for_final_status, pattern='^parts_no$')] + nav_handlers,
-            states.ASK_PART_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, os_close.get_part_name), invalid_input_handler],
-            states.ASK_PART_TAG: [MessageHandler(filters.TEXT & ~filters.COMMAND, os_close.get_part_tag), invalid_input_handler],
-            states.ASK_PART_QTY: [MessageHandler(filters.TEXT & ~filters.COMMAND, os_close.get_part_qty_and_ask_more), invalid_input_handler],
+            states.ASK_PART_NAME: [
+                MessageHandler(free_text_filter, os_close.get_part_name),
+                MessageHandler(menu_button_filter, common.handle_invalid_text_input)
+            ],
+            states.ASK_PART_TAG: [
+                MessageHandler(free_text_filter, os_close.get_part_tag),
+                MessageHandler(menu_button_filter, common.handle_invalid_text_input)
+            ],
+            states.ASK_PART_QTY: [
+                MessageHandler(free_text_filter, os_close.get_part_qty_and_ask_more),
+                MessageHandler(menu_button_filter, common.handle_invalid_text_input)
+            ],
             states.ASK_MORE_PARTS: [CallbackQueryHandler(os_close.ask_part_name, pattern='^parts_yes$'), CallbackQueryHandler(os_close.ask_for_final_status, pattern='^parts_no$')] + nav_handlers,
             states.ASK_FINAL_STATUS: [CallbackQueryHandler(os_close.get_final_status_and_ask_if_attachment, pattern="^(?!back$|cancel_op$).*$")] + nav_handlers,
             states.ASK_IF_ATTACHMENT: [CallbackQueryHandler(os_close.prompt_for_attachment, pattern='^attach_')] + nav_handlers,
@@ -140,7 +163,10 @@ def main() -> None:
                 CallbackQueryHandler(os_close.get_final_notes_and_save, pattern='^notes_yes$'), 
                 CallbackQueryHandler(os_close.finalize_without_notes, pattern='^notes_no$')
             ] + nav_handlers,
-            states.GET_FINAL_NOTES: [MessageHandler(filters.TEXT & ~filters.COMMAND, os_close.get_final_notes_and_save), invalid_input_handler],
+            states.GET_FINAL_NOTES: [
+                MessageHandler(free_text_filter, os_close.get_final_notes_and_save),
+                MessageHandler(menu_button_filter, common.handle_invalid_text_input)
+            ],
         },
         fallbacks=[CommandHandler("cancelar", common.cancel), MessageHandler(filters.Regex("^❌ Cancelar$"), common.cancel)],
         per_user=True, per_chat=True
@@ -161,8 +187,7 @@ def main() -> None:
         entry_points=[MessageHandler(filters.Regex("^📋 Listar Abertas$"), lambda u, c: check_registration_and_start(u, c, os_list.start_list_open_os))],
         states={states.PAGINATING_OS: [CallbackQueryHandler(os_list.navigate_os_page, pattern="^list_open")]},
         fallbacks=[
-            CommandHandler("cancelar", common.cancel), 
-            MessageHandler(filters.Regex("^❌ Cancelar$"), common.cancel),
+            CommandHandler("cancelar", common.cancel), MessageHandler(filters.Regex("^❌ Cancelar$"), common.cancel),
             CallbackQueryHandler(os_list.cancel_pagination, pattern="^list_open_cancel$")
         ],
         per_user=True, per_chat=True,
@@ -171,8 +196,7 @@ def main() -> None:
         entry_points=[MessageHandler(filters.Regex("^🗂️ Listar Fechadas$"), lambda u, c: check_registration_and_start(u, c, os_list.start_list_closed_os))],
         states={states.PAGINATING_CLOSED_OS: [CallbackQueryHandler(os_list.navigate_closed_os_page, pattern="^list_closed")]},
         fallbacks=[
-            CommandHandler("cancelar", common.cancel),
-            MessageHandler(filters.Regex("^❌ Cancelar$"), common.cancel),
+            CommandHandler("cancelar", common.cancel), MessageHandler(filters.Regex("^❌ Cancelar$"), common.cancel),
             CallbackQueryHandler(os_list.cancel_pagination, pattern="^list_closed_cancel$")
         ],
         per_user=True, per_chat=True,
@@ -189,12 +213,14 @@ def main() -> None:
                 CallbackQueryHandler(os_edit.prompt_for_new_value, pattern="^edit_field_"),
                 CallbackQueryHandler(os_edit.finish_editing, pattern="^edit_finish$"),
             ],
-            states.GET_NEW_VALUE_TEXT: [MessageHandler(filters.TEXT & ~filters.COMMAND, os_edit.update_field_from_text), invalid_input_handler],
+            states.GET_NEW_VALUE_TEXT: [
+                MessageHandler(free_text_filter, os_edit.update_field_from_text),
+                MessageHandler(menu_button_filter, common.handle_invalid_text_input)
+            ],
             states.GET_NEW_VALUE_BUTTON: [CallbackQueryHandler(os_edit.update_field_from_button)],
         },
         fallbacks=[
-            CommandHandler("cancelar", common.cancel),
-            MessageHandler(filters.Regex("^❌ Cancelar$"), common.cancel),
+            CommandHandler("cancelar", common.cancel), MessageHandler(filters.Regex("^❌ Cancelar$"), common.cancel),
             CallbackQueryHandler(common.cancel, pattern="^edit_cancel$")
         ],
         per_user=True, per_chat=True,
@@ -218,7 +244,10 @@ def main() -> None:
     parts_conv = ConversationHandler(
         entry_points=[MessageHandler(filters.Regex("^⚙️ Consultar Peças$"), lambda u, c: check_registration_and_start(u, c, parts_manager.start_parts_consult))],
         states={
-            states.ASK_SEARCH_TERM: [MessageHandler(filters.TEXT & ~filters.COMMAND, parts_manager.search_parts), invalid_input_handler]
+            states.ASK_SEARCH_TERM: [
+                MessageHandler(free_text_filter, parts_manager.search_parts),
+                MessageHandler(menu_button_filter, common.handle_invalid_text_input)
+            ]
         },
         fallbacks=[CommandHandler("cancelar", common.cancel), MessageHandler(filters.Regex("^❌ Cancelar$"), common.cancel)],
         per_user=True, per_chat=True,

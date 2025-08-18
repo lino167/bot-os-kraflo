@@ -1,8 +1,6 @@
 import logging
 from telegram import Update
 from telegram.ext import ContextTypes, ConversationHandler
-
-# Importações dos módulos do projeto
 from handlers.registration import ask_company_name
 from handlers.ui_components import MAIN_MENU_MARKUP 
 from database.utils import is_user_registered, get_user_data
@@ -24,7 +22,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         )
         return ConversationHandler.END
     else:
-        # Garante que um novo fluxo de cadastro comece com um histórico limpo
         context.user_data.pop('state_history', None)
         return await ask_company_name(update, context)
 
@@ -36,88 +33,53 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query
     message_text = "Operação cancelada."
     
-    # Se a função foi chamada por um clique de botão, edita a mensagem original.
     if query:
         await query.answer()
         try:
             await query.edit_message_text(text=message_text)
         except Exception as e:
-            # Loga o erro se a mensagem não puder ser editada (ex: já foi removida)
             logger.info(f"Não foi possível editar a mensagem ao cancelar: {e}")
 
-    # Envia uma nova mensagem com o menu principal para garantir que o usuário não fique "preso"
-    # sem o teclado principal.
     await context.bot.send_message(
         chat_id=update.effective_chat.id,
         text="Você está no menu principal.",
         reply_markup=MAIN_MENU_MARKUP
     )
     
-    # Limpa todos os dados da conversa para evitar estados inconsistentes em futuros fluxos.
     context.user_data.clear()
     return ConversationHandler.END
 
 async def back(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """
     Retorna ao passo anterior da conversa.
-    Utiliza um histórico de estados (state_history) e um mapa de estados para funções (state_map).
     """
     query = update.callback_query
     await query.answer()
     
     state_history = context.user_data.get('state_history', [])
     
-    # Remove o estado atual do histórico para revelar o passo anterior.
     if state_history:
         state_history.pop() 
     
-    # Se o histórico ficar vazio, não há para onde voltar, então cancela a operação.
     if not state_history:
         await query.edit_message_text("Não há para onde voltar. A operação será cancelada.")
         return await cancel(update, context)
         
-    # Pega o novo último estado do histórico, que é para onde queremos voltar.
     previous_state = state_history[-1]
     
-    # Busca o mapa de "estado -> função" que foi configurado no main.py
     state_map = context.application.bot_data.get('state_map', {})
     handler_function = state_map.get(previous_state)
     
     if handler_function:
-        # Chama a função correspondente ao estado anterior, passando is_back=True
-        # para que ela saiba que deve apenas re-renderizar a pergunta, sem processar novos dados.
         return await handler_function(update, context, is_back=True)
     else:
-        # Fallback de segurança caso o estado não seja encontrado no mapa.
         logger.warning(f"Função não encontrada no state_map para o estado: {previous_state}")
         await query.edit_message_text("Ocorreu um erro ao tentar voltar. A operação será cancelada.")
         return await cancel(update, context)
 
-async def handle_invalid_input(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """
-    MELHORIA: Lida com inputs inesperados (ex: botões) quando o bot espera texto.
-    Avisa o utilizador e mantém a conversa no estado atual.
-    """
-    state_history = context.user_data.get('state_history', [])
-    
-    if not state_history:
-        # Se não houver histórico, não podemos saber onde voltar, então cancelamos.
-        return await cancel(update, context)
-
-    current_state = state_history[-1]
-    
-    await update.message.reply_text(
-        "⚠️ Ops! Parece que enviou algo que eu não esperava.\n\n"
-        "Por favor, envie a informação que pedi em formato de texto. "
-        "Se quiser sair, pode usar o botão '❌ Cancelar' abaixo."
-    )
-    
-    # Retorna para o mesmo estado, aguardando o input correto.
-    return current_state
-
 async def about(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """
-    MELHORIA: Envia uma mensagem com informações sobre o projeto.
+    Envia uma mensagem com informações sobre o projeto.
     """
     about_text = (
         "ℹ️ **Sobre o Kraflo OS Bot**\n\n"
@@ -128,6 +90,26 @@ async def about(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "- Upload de fotos e anexos\n"
         "- Geração de relatórios em PDF e CSV\n\n"
         "**Tecnologias:** Python, `python-telegram-bot`, Supabase (PostgreSQL).\n\n"
-        "Este projeto é um trabalho de zacarias lino ramos filho."
+        "Criado por Zacarias Ramos."
     )
-    await update.message.reply_text(about_text, reply_markup=MAIN_MENU_MARKUP)
+    await update.message.reply_text(about_text, reply_markup=MAIN_MENU_MARKUP, parse_mode='Markdown')
+
+async def handle_invalid_text_input(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """
+    Lida com inputs de texto inesperados (ex: botões) quando o bot espera texto livre.
+    Avisa o utilizador e mantém a conversa no estado atual.
+    """
+    state_history = context.user_data.get('state_history', [])
+    
+    if not state_history:
+        return await cancel(update, context)
+
+    current_state = state_history[-1]
+    
+    await update.message.reply_text(
+        "⚠️ Ops! Parece que você clicou num botão, mas eu estava à espera que digitasse uma informação.\n\n"
+        "Por favor, envie a informação que pedi em formato de texto. "
+        "Se quiser sair, pode usar o botão '❌ Cancelar' abaixo."
+    )
+    
+    return current_state
