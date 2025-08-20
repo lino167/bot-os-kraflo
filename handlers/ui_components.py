@@ -27,6 +27,6 @@ PRIORIDADE_KEYBOARD = [
 
 # Teclado para selecionar o Status da OS
 STATUS_OS_KEYBOARD = [
-    [InlineKeyboardButton("✅ Concluída", callback_data="Concluída")],
-    [InlineKeyboardButton("⏳ Pendente", callback_data="Pendente")],
+    [InlineKeyboardButton("✅ Liberado para produção", callback_data="Liberado para produção")],
+    [InlineKeyboardButton("⏳ Não liberado", callback_data="Não liberado")],
 ]
