@@ -160,7 +160,7 @@ async def prompt_for_new_value(update: Update, context: ContextTypes.DEFAULT_TYP
     )
 
     if field_key in FIELDS_WITH_BUTTONS:
-        keyboard = FIELDS_WITH_BUTTONS[field_key]
+        keyboard = FIELDS_WITH_BUTTONS[field_key].copy()
         reply_markup = InlineKeyboardMarkup(keyboard)
         await query.edit_message_text(
             prompt_message + "Selecione o novo valor:",

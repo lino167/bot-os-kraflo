@@ -29,5 +29,4 @@ PRIORIDADE_KEYBOARD = [
 STATUS_OS_KEYBOARD = [
     [InlineKeyboardButton("✅ Concluída", callback_data="Concluída")],
     [InlineKeyboardButton("⏳ Pendente", callback_data="Pendente")],
-    [InlineKeyboardButton("🔴 Aberta", callback_data="Aberta")]
 ]

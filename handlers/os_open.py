@@ -75,7 +75,7 @@ async def get_location(update: Update, context: ContextTypes.DEFAULT_TYPE, is_ba
         push_state(context, ASK_MAINT_TYPE)
         context.user_data['os_data']['localizacao'] = update.message.text
     
-    reply_markup = InlineKeyboardMarkup(add_nav_buttons(TIPO_MANUTENCAO_KEYBOARD))
+    reply_markup = InlineKeyboardMarkup(add_nav_buttons(TIPO_MANUTENCAO_KEYBOARD.copy()))
     message_text = "Qual o tipo de manutenção a ser realizada?"
 
     if is_back:
@@ -93,7 +93,7 @@ async def get_maintenance_type(update: Update, context: ContextTypes.DEFAULT_TYP
         push_state(context, ASK_PRIORITY)
         context.user_data['os_data']['tipo_manutencao'] = query.data
     
-    reply_markup = InlineKeyboardMarkup(add_nav_buttons(PRIORIDADE_KEYBOARD))
+    reply_markup = InlineKeyboardMarkup(add_nav_buttons(PRIORIDADE_KEYBOARD.copy()))
     message = f"Tipo: {context.user_data['os_data']['tipo_manutencao']}.\nAgora, qual o nível de prioridade?"
     await query.edit_message_text(text=message, reply_markup=reply_markup)
     return ASK_PRIORITY
