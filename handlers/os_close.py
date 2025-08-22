@@ -128,7 +128,7 @@ async def ask_for_final_status(update: Update, context: ContextTypes.DEFAULT_TYP
     if not is_back:
         push_state(context, ASK_FINAL_STATUS)
 
-    reply_markup = InlineKeyboardMarkup(add_nav_buttons(STATUS_OS_KEYBOARD))
+    reply_markup = InlineKeyboardMarkup(add_nav_buttons(STATUS_OS_KEYBOARD.copy()))
     await query.edit_message_text(text="Entendido. Qual o status final desta Ordem de Serviço?", reply_markup=reply_markup)
     return ASK_FINAL_STATUS
 
