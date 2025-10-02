@@ -92,7 +92,3 @@ A estrutura do projeto é dividida em responsabilidades claras:
 
 * [LinkedIn](https://www.linkedin.com/in/zacarias-lino-ramos-filho-5203b61a2/)
 * [GitHub](https://github.com/lino167)
-
----
-
-*Este projeto foi desenvolvido com a assistência e orientação de uma IA.*
