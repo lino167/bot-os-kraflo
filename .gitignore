@@ -21,3 +21,5 @@ pycache/
 
 #Ficheiro de persistência do bot
 bot_persistence*
+*.log
+bot_debug.log
